@@ -6,10 +6,30 @@ async function conexionBD() {
 
     const opciones = {
         serverSelectionTimeoutMS: 5000,
-        connectTimeoutMS: 10000
+        connectTimeoutMS: 10000,
+        maxPoolSize: 10,
+        minPoolSize: 0,
     };
 
     await mongoose.connect(uri, opciones);
 }
+mongoose.connection.on('connected', () => {
+    console.log('MongoDB conectado (mongoose.connection.readyState =', mongoose.connection.readyState, ')');
+});
+mongoose.connection.on('error', (err) => {
+    console.error('Error en conexión MongoDB:', err);
+});
+mongoose.connection.on('disconnected', () => {
+    console.warn('MongoDB desconectado');
+});
+}
 
+async function desconectarBD() {
+    try {
+        await mongoose.disconnect();
+        console.log('Desconectado de MongoDB');
+    } catch (e) {
+        console.error('Error al desconectar MongoDB:', e);
+    }
+}
 module.exports = { conexionBD };

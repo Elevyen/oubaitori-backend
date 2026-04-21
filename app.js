@@ -3,13 +3,15 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 
-const { conexionBD } = require('./config/mongodb');
+const { conexionBD, desconectarBD } = require('./config/mongodb');
 
 const aplicacion = express();
+
 const puerto = process.env.PORT || 4000;
+const origenCors = process.env.CORS_ORIGIN || '*';
 
 aplicacion.use(express.json({ limit: '200kb' }));
-aplicacion.use(cors({ origin: process.env.CORS_ORIGIN || '*' }));
+aplicacion.use(cors({ origin: origenCors }));
 
 // Health check para Render que muestra el estado de conexión
 aplicacion.get('/health', (req, res) => {
@@ -19,7 +21,6 @@ aplicacion.get('/health', (req, res) => {
 });
 
 aplicacion.get('/', (req, res) => res.send('Backend de Oubaitori funcionando'));
-
 
 async function iniciar() {
     try {
@@ -34,12 +35,11 @@ async function iniciar() {
             console.log(`Recibido ${signal}. Apagando servidor.`);
             servidor.close(async (err) => {
                 if (err) {
-                    console.error('Error apagando servidor:', err);
+                    console.error('Error cerrando servidor:', err);
                     process.exit(1);
                 }
                 try {
-                    await mongoose.disconnect();
-                    console.log('Desconectado de MongoDB.');
+                    await desconectarBD();
                     process.exit(0);
                 } catch (e) {
                     console.error('Error al desconectar MongoDB:', e);
