@@ -5,34 +5,107 @@ const cors = require('cors');
 
 const { conexionBD, desconectarBD } = require('./config/mongodb');
 
-const aplicacion = express();
+const registrosRouter = require('./routes/Registros');
+const usuariosRouter = require('./routes/Usuarios');
+const internalRouter = require('./routes/internal');
+const partnersRouter = require('./routes/partners');
+const analisisDiarioRouter = require('./routes/AnalisisDiario');
 
-const puerto = process.env.PORT || 4000;
-const origenCors = process.env.CORS_ORIGIN || '*';
 
-aplicacion.use(express.json({ limit: '200kb' }));
-aplicacion.use(cors({ origin: origenCors }));
+const contactoRouter = require('./routes/contacto');
 
-// Health check para Render que muestra el estado de conexión
-aplicacion.get('/health', (req, res) => {
+const app = express();
+
+const PORT = process.env.PORT || 4000;
+const ORIGEN_CORS = process.env.CORS_ORIGIN || '';
+
+
+app.use(express.json({ limit: '20mb' }));
+app.use((req, res, next) => {
+  if (['POST','PUT','PATCH'].includes(req.method)) {
+    console.log('--- WRITE REQUEST ---');
+    console.log('time:', new Date().toISOString());
+    console.log('method:', req.method, 'url:', req.originalUrl);
+    console.log('origin:', req.headers.origin || req.headers.referer || 'n/a');
+    console.log('user-agent:', req.headers['user-agent'] || 'n/a');
+    console.log('auth present:', !!req.headers.authorization);
+    try { console.log('body preview:', JSON.stringify(req.body).slice(0,1000)); } catch(e) {}
+    console.log('---------------------');
+  }
+  next();
+});
+
+// Ruta de prueba para verificar middleware de autenticación
+const authMiddleware = require('./middleware/auth');
+app.get('/_test_auth', authMiddleware, (req, res) => {
+    res.json({
+        ok: true,
+        usuarioId: req.usuario ? String(req.usuario._id) : null,
+        usuario: req.usuario ? { email: req.usuario.email, nombre: req.usuario.nombre } : null
+    });
+});
+
+// CORS
+const allowedOrigins = [
+    'http://localhost:5173',
+    process.env.FRONTEND_ORIGIN || '',
+    ORIGEN_CORS
+].filter(Boolean);
+
+app.use(cors({
+    origin: function (origin, callback) {
+        if (!origin) return callback(null, true);
+        if (allowedOrigins.indexOf(origin) !== -1) return callback(null, true);
+        return callback(new Error('CORS no permitido por el servidor'));
+    },
+    credentials: true
+}));
+
+// Health check
+app.get('/health', (req, res) => {
     const estadoMongo = mongoose.connection.readyState;
     const ok = estadoMongo === 1;
     res.status(ok ? 200 : 503).json({ estado: ok ? 'ok' : 'db-down', estadoMongo });
 });
 
-aplicacion.get('/', (req, res) => res.send('Backend de Oubaitori funcionando'));
+app.get('/', (req, res) => res.send('Backend de Oubaitori funcionando'));
 
+// Rutas
+app.use('/api/registros', registrosRouter);
+app.use('/api/usuarios', usuariosRouter);
+app.use('/api/internal', internalRouter);
+app.use('/api/partners', partnersRouter);
+
+// Montar ruta de contacto
+app.use('/api/contacto', contactoRouter);
+
+// Montar AnalisisDias protegido por authMiddleware para que req.usuario esté disponible
+app.use('/api/AnalisisDiario', authMiddleware, analisisDiarioRouter);
+
+// 404 handler (ruta no encontrada)
+app.use((req, res) => {
+  res.status(404).json({ ok: false, message: 'not_found' });
+});
+
+// Error handler centralizado
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err && err.stack ? err.stack : err);
+  if (res.headersSent) return next(err);
+  res.status(500).json({ ok: false, message: 'internal_server_error' });
+});
+
+// Arranque y apagado controlado
 async function iniciar() {
     try {
         await conexionBD();
         console.log('Conectado a MongoDB');
 
-        const servidor = aplicacion.listen(puerto, () => {
-            console.log(`Servidor corriendo en http://localhost:${puerto}`);
+        const servidor = app.listen(PORT, () => {
+            console.log(`Servidor corriendo en http://localhost:${PORT}`);
         });
 
         const apagar = async (signal) => {
-            console.log(`Recibido ${signal}. Apagando servidor.`);
+            console.log(`Recibido ${signal}. Cerrando servidor...`);
             servidor.close(async (err) => {
                 if (err) {
                     console.error('Error cerrando servidor:', err);
@@ -57,9 +130,7 @@ async function iniciar() {
 }
 
 if (require.main === module) {
-    //Para las ejecuciones locales o en Render
     iniciar();
 }
 
-//Para las ejecuciones de test unitarios de la última semana
-module.exports = aplicacion;
+module.exports = app;

@@ -13,6 +13,7 @@ async function conexionBD() {
 
     await mongoose.connect(uri, opciones);
 }
+
 mongoose.connection.on('connected', () => {
     console.log('MongoDB conectado (mongoose.connection.readyState =', mongoose.connection.readyState, ')');
 });
@@ -22,7 +23,6 @@ mongoose.connection.on('error', (err) => {
 mongoose.connection.on('disconnected', () => {
     console.warn('MongoDB desconectado');
 });
-}
 
 async function desconectarBD() {
     try {
@@ -32,4 +32,5 @@ async function desconectarBD() {
         console.error('Error al desconectar MongoDB:', e);
     }
 }
-module.exports = { conexionBD };
+
+module.exports = { conexionBD, desconectarBD };
