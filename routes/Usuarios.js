@@ -56,9 +56,11 @@ function sanitizeUserForResponse(u) {
 /* POST /api/usuarios/check-email */
 router.post('/check-email', async (req, res) => {
     try {
+        console.log('servicio comprobacion de usuario');
         const email = (req.body && req.body.email || '').toLowerCase().trim();
         if (!email) return res.status(400).json({ error: 'email_requerido' });
         const exists = !!(await Usuario.findOne({ email }).select('_id').lean());
+        console.log('resultado comprobacion de usuario:' + exists);
         return res.json({ exists });
     } catch (err) {
         console.error('Error en /api/usuarios/check-email', err);
