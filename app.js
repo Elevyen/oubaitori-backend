@@ -22,17 +22,17 @@ const ORIGEN_CORS = process.env.CORS_ORIGIN || '';
 
 app.use(express.json({ limit: '20mb' }));
 app.use((req, res, next) => {
-  if (['POST','PUT','PATCH'].includes(req.method)) {
-    console.log('--- WRITE REQUEST ---');
-    console.log('time:', new Date().toISOString());
-    console.log('method:', req.method, 'url:', req.originalUrl);
-    console.log('origin:', req.headers.origin || req.headers.referer || 'n/a');
-    console.log('user-agent:', req.headers['user-agent'] || 'n/a');
-    console.log('auth present:', !!req.headers.authorization);
-    try { console.log('body preview:', JSON.stringify(req.body).slice(0,1000)); } catch(e) {}
-    console.log('---------------------');
-  }
-  next();
+    if (['POST', 'PUT', 'PATCH'].includes(req.method)) {
+        console.log('--- WRITE REQUEST ---');
+        console.log('time:', new Date().toISOString());
+        console.log('method:', req.method, 'url:', req.originalUrl);
+        console.log('origin:', req.headers.origin || req.headers.referer || 'n/a');
+        console.log('user-agent:', req.headers['user-agent'] || 'n/a');
+        console.log('auth present:', !!req.headers.authorization);
+        try { console.log('body preview:', JSON.stringify(req.body).slice(0, 1000)); } catch (e) { }
+        console.log('---------------------');
+    }
+    next();
 });
 
 // Ruta de prueba para verificar middleware de autenticación
@@ -48,6 +48,7 @@ app.get('/_test_auth', authMiddleware, (req, res) => {
 // CORS
 const allowedOrigins = [
     'http://localhost:5173',
+    process.env.FRONTEND_ORIGIN_VERCEL || '',
     process.env.FRONTEND_ORIGIN || '',
     ORIGEN_CORS
 ].filter(Boolean);
@@ -84,14 +85,14 @@ app.use('/api/AnalisisDiario', authMiddleware, analisisDiarioRouter);
 
 // 404 handler (ruta no encontrada)
 app.use((req, res) => {
-  res.status(404).json({ ok: false, message: 'not_found' });
+    res.status(404).json({ ok: false, message: 'not_found' });
 });
 
 // Error handler centralizado
 app.use((err, req, res, next) => {
-  console.error('Unhandled error:', err && err.stack ? err.stack : err);
-  if (res.headersSent) return next(err);
-  res.status(500).json({ ok: false, message: 'internal_server_error' });
+    console.error('Unhandled error:', err && err.stack ? err.stack : err);
+    if (res.headersSent) return next(err);
+    res.status(500).json({ ok: false, message: 'internal_server_error' });
 });
 
 // Arranque y apagado controlado
