@@ -5,7 +5,7 @@ async function conexionBD() {
     if (!uri) throw new Error('MONGO_URI no definida');
     const opciones = {
         serverSelectionTimeoutMS: 5000,
-        connectTimeoutMS: 10000,
+        connectTimeoutMS: 100000,
         maxPoolSize: 10,
         minPoolSize: 0,
     };
