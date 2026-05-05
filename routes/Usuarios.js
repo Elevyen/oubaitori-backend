@@ -31,7 +31,8 @@ function getReqUserId(req) {
 }
 
 /**
- * Asegura que _id e id sean strings
+ * Helper: convierte un documento/objeto usuario a una forma segura para la API
+ * Asegura que _id e id sean strings y elimina campos sensibles.
  */
 function sanitizeUserForResponse(u) {
     if (!u) return null;
@@ -43,15 +44,16 @@ function sanitizeUserForResponse(u) {
             copy._id = copy._id;
         }
     }
-    // exponer id además de _id
+    // mantener compatibilidad: exponer id además de _id
     if (copy.id === undefined && copy._id !== undefined) copy.id = copy._id;
-    // eliminar campos sensibles
+    // eliminar campos sensibles si existen
     if (copy.passwordHash !== undefined) delete copy.passwordHash;
     if (copy.__v !== undefined) delete copy.__v;
     return copy;
 }
 
- /api/usuarios/check-email
+
+/* POST /api/usuarios/check-email */
 router.post('/check-email', async (req, res) => {
     try {
         const email = (req.body && req.body.email || '').toLowerCase().trim();
@@ -64,12 +66,12 @@ router.post('/check-email', async (req, res) => {
     }
 });
 
-// POST /api/usuarios/create-pending
+/* POST /api/usuarios/create-pending */
 router.post('/create-pending', async (req, res) => {
     try {
         const { nombre, email, password, genero, pronombres } = req.body || {};
         if (!nombre || !email || !password) {
-            return res.status(400).json({ error: 'Nombre mail y password requeridos' });
+            return res.status(400).json({ error: 'nombre_email_password_requeridos' });
         }
 
         const emailNorm = String(email).toLowerCase().trim();
@@ -96,7 +98,7 @@ router.post('/create-pending', async (req, res) => {
     }
 });
 
-// POST /api/usuarios/complete-registration
+/* POST /api/usuarios/complete-registration */
 router.post('/complete-registration', async (req, res) => {
     try {
         const { pendingToken, personaje } = req.body || {};
@@ -143,7 +145,7 @@ router.post('/complete-registration', async (req, res) => {
     }
 });
 
-// POST /api/usuarios/login
+/* POST /api/usuarios/login */
 router.post('/login', async (req, res) => {
     try {
         const { email, password } = req.body || {};
@@ -173,7 +175,8 @@ router.post('/login', async (req, res) => {
     }
 });
 
-/* GET /api/usuarios Lista usuarios (incluye genero y pronombres) */
+/* GET /api/usuarios
+   Lista usuarios (incluye genero y pronombres) */
 router.get('/', authMiddleware, async (req, res) => {
     try {
         const limit = Math.min(Number(req.query.limit) || 50, 200);
@@ -186,26 +189,27 @@ router.get('/', authMiddleware, async (req, res) => {
         return res.status(200).json({ ok: true, count: sanitized.length, usuarios: sanitized });
     } catch (err) {
         console.error('GET /api/usuarios error', err);
-        return res.status(500).json({ error: 'Error listando usuarios' });
+        return res.status(500).json({ error: 'error_listando_usuarios' });
     }
 });
 
-/* GET /api/usuarios/usuario Devuelve el usuario autenticado */
+/* GET /api/usuarios/usuario
+   Devuelve el usuario autenticado */
 router.get('/usuario', authMiddleware, async (req, res) => {
     try {
         const id = getReqUserId(req);
-        if (!id) return res.status(401).json({ error: 'No autorizado' });
+        if (!id) return res.status(401).json({ error: 'no_autorizado' });
 
         if (!mongoose.Types.ObjectId.isValid(id)) {
-            console.error('GET /usuario - ID invalido:', id);
-            return res.status(401).json({ error: 'No autorizado' });
+            console.error('GET /usuario - id_invalido:', id);
+            return res.status(401).json({ error: 'no_autorizado' });
         }
 
         const usuario = await Usuario.findById(id)
             .select('nombre email genero pronombres personaje gustos')
             .lean();
 
-        if (!usuario) return res.status(404).json({ error: 'Usuario no encontrado' });
+        if (!usuario) return res.status(404).json({ error: 'usuario_no_encontrado' });
 
         const sanitized = sanitizeUserForResponse(usuario);
         return res.status(200).json({ ok: true, usuario: sanitized });
@@ -215,7 +219,8 @@ router.get('/usuario', authMiddleware, async (req, res) => {
     }
 });
 
-/* PUT /api/usuarios/usuario Actualiza perfil del usuario autenticado (nombre, email, personaje, gustos, genero, pronombres) */
+/* PUT /api/usuarios/usuario
+   Actualiza perfil del usuario autenticado (nombre, email, personaje, gustos, genero, pronombres) */
 router.put('/usuario', authMiddleware, async (req, res) => {
     console.log('PUT /api/usuarios/usuario - headers.Authorization:', req.headers.authorization);
     console.log('PUT /api/usuarios/usuario - req.usuario:', req.usuario);
@@ -223,8 +228,8 @@ router.put('/usuario', authMiddleware, async (req, res) => {
     console.log('PUT /api/usuarios/usuario - body:', JSON.stringify(req.body));
     try {
         const id = getReqUserId(req);
-        if (!id) return res.status(401).json({ error: 'No autorizado' });
-        if (!mongoose.Types.ObjectId.isValid(id)) return res.status(401).json({ error: 'No autorizado' });
+        if (!id) return res.status(401).json({ error: 'no_autorizado' });
+        if (!mongoose.Types.ObjectId.isValid(id)) return res.status(401).json({ error: 'no_autorizado' });
 
         const body = req.body || {};
         const update = {};
@@ -245,32 +250,33 @@ router.put('/usuario', authMiddleware, async (req, res) => {
         }
 
         if (Object.keys(update).length === 0) {
-            return res.status(400).json({ error: 'No hay campos que actualizar' });
+            return res.status(400).json({ error: 'sin_campos_para_actualizar' });
         }
 
-        // Si se intenta cambiar email, comprobar unicidad
+        // Si se intenta cambiar email, comprobar
         if (update.email) {
             const other = await Usuario.findOne({ email: update.email, _id: { $ne: id } }).select('_id').lean();
-            if (other) return res.status(409).json({ error: 'Email en uso' });
+            if (other) return res.status(409).json({ error: 'email_ya_en_uso' });
         }
 
         const updated = await Usuario.findByIdAndUpdate(id, { $set: update }, { new: true, select: 'nombre email genero pronombres personaje gustos' }).lean();
-        if (!updated) return res.status(404).json({ error: 'Usuario no encontrado' });
+        if (!updated) return res.status(404).json({ error: 'usuario_no_encontrado' });
 
         const sanitized = sanitizeUserForResponse(updated);
         return res.status(200).json({ ok: true, usuario: sanitized });
     } catch (err) {
         console.error('PUT /api/usuarios/usuario error', err);
-        return res.status(500).json({ error: 'Error actualizando perfil' });
+        return res.status(500).json({ error: 'error_actualizando_perfil' });
     }
 });
 
-/* POST /api/usuarios/usuario/personaje   Actualiza personaje del usuario autenticado (parcial) */
+/* POST /api/usuarios/usuario/personaje
+   Actualiza personaje del usuario autenticado (parcial) */
 router.post('/usuario/personaje', authMiddleware, async (req, res) => {
     try {
         const id = getReqUserId(req);
-        if (!id) return res.status(401).json({ error: 'No autorizado' });
-        if (!mongoose.Types.ObjectId.isValid(id)) return res.status(401).json({ error: 'No autorizado' });
+        if (!id) return res.status(401).json({ error: 'no_autorizado' });
+        if (!mongoose.Types.ObjectId.isValid(id)) return res.status(401).json({ error: 'no_autorizado' });
 
         const p = req.body.personaje || {};
         const personaje = {
@@ -286,7 +292,7 @@ router.post('/usuario/personaje', authMiddleware, async (req, res) => {
             { new: true, select: 'personaje' }
         ).lean();
 
-        if (!updated) return res.status(404).json({ error: 'Usuario no encontrado' });
+        if (!updated) return res.status(404).json({ error: 'usuario_no_encontrado' });
         return res.status(200).json({ ok: true, personaje: updated.personaje });
     } catch (err) {
         console.error('Error POST /api/usuarios/usuario/personaje', err);
@@ -294,19 +300,20 @@ router.post('/usuario/personaje', authMiddleware, async (req, res) => {
     }
 });
 
-/* POST /api/usuarios/usuario/password   Cambiar contraseña (requiere currentPassword) */
+/* POST /api/usuarios/usuario/password
+   Cambiar contraseña (requiere currentPassword) */
 router.post('/usuario/password', authMiddleware, async (req, res) => {
     try {
         const id = getReqUserId(req);
-        if (!id) return res.status(401).json({ error: 'No autorizado' });
-        if (!mongoose.Types.ObjectId.isValid(id)) return res.status(401).json({ error: 'No autorizado' });
+        if (!id) return res.status(401).json({ error: 'no_autorizado' });
+        if (!mongoose.Types.ObjectId.isValid(id)) return res.status(401).json({ error: 'no_autorizado' });
 
         const { currentPassword, newPassword } = req.body || {};
         if (!currentPassword || !newPassword) return res.status(400).json({ error: 'passwords_requeridos' });
         if (String(newPassword).length < 8) return res.status(400).json({ error: 'password_demasiado_corto' });
 
         const usuario = await Usuario.findById(id).select('+passwordHash').exec();
-        if (!usuario) return res.status(404).json({ error: 'Usuario no encontrado' });
+        if (!usuario) return res.status(404).json({ error: 'usuario_no_encontrado' });
 
         const match = await bcrypt.compare(String(currentPassword), usuario.passwordHash);
         if (!match) return res.status(401).json({ error: 'password_actual_incorrecta' });
@@ -323,11 +330,12 @@ router.post('/usuario/password', authMiddleware, async (req, res) => {
 });
 
 
-/* PUT /api/usuarios/:id   Actualiza campos permitidos de un usuario (admin / protegido) */
+/* PUT /api/usuarios/:id
+   Actualiza campos permitidos de un usuario (admin / protegido) */
 router.put('/:id', authMiddleware, async (req, res) => {
     try {
         const id = req.params.id;
-        if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ error: 'ID invalido' });
+        if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ error: 'id_invalido' });
 
         const body = req.body || {};
         const update = {};
@@ -346,13 +354,13 @@ router.put('/:id', authMiddleware, async (req, res) => {
         }
 
         if (Object.keys(update).length === 0) {
-            return res.status(400).json({ error: 'No hay campos que actualizar' });
+            return res.status(400).json({ error: 'sin_campos_para_actualizar' });
         }
 
         // comprobar email único si se cambia
         if (update.email) {
             const other = await Usuario.findOne({ email: update.email, _id: { $ne: id } }).select('_id').lean();
-            if (other) return res.status(409).json({ error: 'Email ya en uso' });
+            if (other) return res.status(409).json({ error: 'email_ya_en_uso' });
         }
 
         const updated = await Usuario.findByIdAndUpdate(
@@ -361,13 +369,13 @@ router.put('/:id', authMiddleware, async (req, res) => {
             { new: true, select: 'nombre email genero pronombres personaje gustos' }
         ).lean();
 
-        if (!updated) return res.status(404).json({ error: 'Usuario no encontrado' });
+        if (!updated) return res.status(404).json({ error: 'usuario_no_encontrado' });
 
         const sanitized = sanitizeUserForResponse(updated);
         return res.status(200).json({ ok: true, usuario: sanitized });
     } catch (err) {
         console.error('PUT /api/usuarios/:id error', err);
-        return res.status(500).json({ error: 'Error actualizando usuario' });
+        return res.status(500).json({ error: 'error_actualizando_usuario' });
     }
 });
 
@@ -376,13 +384,13 @@ router.put('/:id', authMiddleware, async (req, res) => {
 router.delete('/:id', authMiddleware, async (req, res) => {
     try {
         const id = req.params.id;
-        if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ error: 'ID invalido' });
+        if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ error: 'id_invalido' });
         const deleted = await Usuario.findByIdAndDelete(id).lean();
-        if (!deleted) return res.status(404).json({ error: 'Usuario no encontrado' });
+        if (!deleted) return res.status(404).json({ error: 'usuario_no_encontrado' });
         return res.status(200).json({ ok: true });
     } catch (err) {
         console.error('DELETE /api/usuarios/:id error', err);
-        return res.status(500).json({ error: 'Error_borrando_usuario' });
+        return res.status(500).json({ error: 'error_borrando_usuario' });
     }
 });
 
@@ -391,13 +399,13 @@ router.delete('/:id', authMiddleware, async (req, res) => {
 router.get('/:id', authMiddleware, async (req, res) => {
     try {
         const id = req.params.id;
-        if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ error: 'ID invalido' });
+        if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ error: 'id_invalido' });
 
         const usuario = await Usuario.findById(id)
             .select('nombre email genero pronombres personaje gustos')
             .lean();
 
-        if (!usuario) return res.status(404).json({ error: 'Usuario no encontrado' });
+        if (!usuario) return res.status(404).json({ error: 'usuario_no_encontrado' });
 
         const sanitized = sanitizeUserForResponse(usuario);
         return res.status(200).json({ usuario: sanitized });
