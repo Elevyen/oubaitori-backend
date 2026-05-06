@@ -146,7 +146,7 @@ router.post('/', async (req, res) => {
                 .then(async(data) => {
                     console.log('Email enviado:', data);
                 })
-                .catch(async (error) => {
+                .catch(async (err) => {
                     try {
                         await ContactModel.findByIdAndUpdate(doc._id, {
                             $inc: { mailAttempts: 1 },
