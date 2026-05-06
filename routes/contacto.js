@@ -140,21 +140,21 @@ router.post('/', async (req, res) => {
                 await ContactModel.findByIdAndUpdate(doc._id, { notified: true, notifiedAt: new Date() });
             } catch (updErr) {
                 // no interrumpir el flujo por fallo de actualización
-                apiInstance.sendTransacEmail(sendSmtpEmail)
-                    .then(async(data) => {
-                        console.log('Email enviado:', data);
-                    })
-                    .catch(async(error) => {
+            }
+
+            apiInstance.sendTransacEmail(sendSmtpEmail)
+                .then(async(data) => {
+                    console.log('Email enviado:', data);
+                })
+                .catch(async (error) => {
+                    try {
                         await ContactModel.findByIdAndUpdate(doc._id, {
                             $inc: { mailAttempts: 1 },
                             mailError: String(err.message || err).slice(0, 1000),
                             lastMailErrorAt: new Date()
                         });
-
-                        console.error('Brevo error:', error.response?.body || error);
-                    });
-            }
-
+                    } catch (updErr) { }
+                });
 
         })();
 
