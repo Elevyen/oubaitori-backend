@@ -66,6 +66,11 @@ function createTransporter() {
         socketTimeout: 10000
     });
 }
+/**
+ * 
+ * POST /api/contacto
+ * Guarda contacto y envía correo con BREVO.
+ */
 router.post('/', async (req, res) => {
     try {
         const usuario = req.usuario || null;
@@ -130,11 +135,23 @@ router.post('/', async (req, res) => {
             ].join('\n\n')
         };
 
+        try {
+            await ContactModel.findByIdAndUpdate(doc._id, { notified: true, notifiedAt: new Date() });
+        } catch (updErr) {
+            // no interrumpir el flujo por fallo de actualización
+        }
+
         apiInstance.sendTransacEmail(sendSmtpEmail)
             .then((data) => {
                 console.log('Email enviado:', data);
             })
             .catch((error) => {
+                await ContactModel.findByIdAndUpdate(doc._id, {
+                    $inc: { mailAttempts: 1 },
+                    mailError: String(err.message || err).slice(0, 1000),
+                    lastMailErrorAt: new Date()
+                });
+
                 console.error('Brevo error:', error.response?.body || error);
             });
 
@@ -145,7 +162,7 @@ router.post('/', async (req, res) => {
 /**
  * POST COMENTADO DEBIDO A QUE EL ENVIO CON GOOGLE NO FUNCIONA EN RENDER
  * POST /api/contacto
- * Guarda contacto y envía correo en background.
+ * Guarda contacto y envía correo.
  */
 //router.post('/', async (req, res) => {
 //    try {
