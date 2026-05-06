@@ -4,14 +4,12 @@ const router = express.Router();
 const ContactModel = require('../models/contacto');
 const nodemailer = require('nodemailer');
 
-// Cargar auth middleware si existe (rutas admin)
 let authMiddleware;
 try {
     authMiddleware = require('../middleware/auth');
 } catch (e) {
     authMiddleware = null;
 }
-
 /**
  * extraer id y email del usuario autenticado
  */
@@ -176,11 +174,9 @@ router.get('/', authMiddleware ? authMiddleware : (req, res, next) => next(), as
         if (!req.usuario && authMiddleware) {
             return res.status(401).json({ ok: false, message: 'unauthenticated' });
         }
-
         const page = Math.max(1, Number(req.query.page || 1));
         const limit = Math.min(200, Math.max(1, Number(req.query.limit || 25)));
         const skip = (page - 1) * limit;
-
         const filter = {};
         if (req.query.tipo) filter.tipo = req.query.tipo;
         if (typeof req.query.resuelto !== 'undefined') {
@@ -200,7 +196,7 @@ router.get('/', authMiddleware ? authMiddleware : (req, res, next) => next(), as
 });
 
 /**
- * PATCH /api/contacto/:id/resuelto
+ *  /api/contacto/:id/resuelto
  * Marcar/desmarcar como resuelto (solo admin)
  * Body: { resuelto: true|false }
  */

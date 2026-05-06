@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const mongoose = require('mongoose');
 const Usuario = require('../models/Usuario');
+const Registro = require('../models/RegistroEmocional');
 const PendingUser = require('../models/PendingUser');
 const authMiddleware = require('../middleware/auth');
 
@@ -15,9 +16,8 @@ const PENDING_MIN = Number(process.env.PENDING_TOKEN_EXPIRES_MIN || 15);
 function signPendingToken(payload, expiresInMinutes) {
     return jwt.sign(payload, JWT_SECRET, { expiresIn: `${expiresInMinutes}m` });
 }
-
 /**
- * Helper: normaliza y obtiene id del usuario desde req.usuario
+ * Helper: normaliza y obtiene id del usuario
  */
 function getReqUserId(req) {
     const raw = req.usuario || {};
@@ -75,21 +75,17 @@ router.post('/create-pending', async (req, res) => {
         if (!nombre || !email || !password) {
             return res.status(400).json({ error: 'nombre_email_password_requeridos' });
         }
-
         const emailNorm = String(email).toLowerCase().trim();
         const exists = await Usuario.findOne({ email: emailNorm }).select('_id').lean();
         if (exists) return res.status(409).json({ error: 'usuario_ya_existe' });
-
         const passwordHash = await bcrypt.hash(String(password), SALT_ROUNDS);
         const pendingToken = signPendingToken({ email: emailNorm }, PENDING_MIN);
         const expiresAt = new Date(Date.now() + PENDING_MIN * 60 * 1000);
-
         await PendingUser.findOneAndUpdate(
             { email: emailNorm },
             { pendingToken, nombre, email: emailNorm, passwordHash, genero: genero || null, pronombres: pronombres || null, expiresAt },
             { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
         );
-
         return res.json({
             pendingToken,
             pendingUser: { nombre, email: emailNorm, genero: genero || null, pronombres: pronombres || null }
@@ -414,6 +410,44 @@ router.get('/:id', authMiddleware, async (req, res) => {
     } catch (err) {
         console.error('GET /api/usuarios/:id error', err);
         return res.status(500).json({ error: 'error_obteniendo_usuario' });
+    }
+});
+// DELETE /api/usuarios/:id/registros
+// Borra todos los registros asociados al usuario indicado por id
+router.delete('/:id/registros', authMiddleware, async (req, res) => {
+    try {
+        const id = req.params.id;
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ error: 'id_invalido' });
+        }
+
+        // Seguridad: permitir solo al propio usuario o a un admin
+        // Ajusta según tu estructura de req.user (por ejemplo req.user.id o req.user._id)
+        if (!req.user) return res.status(401).json({ error: 'no_autenticado' });
+        const requesterId = String(req.user._id || req.user.id || '');
+        const isAdmin = !!req.user.isAdmin;
+        if (requesterId !== String(id) && !isAdmin) {
+            return res.status(403).json({ error: 'no_autorizado' });
+        }
+
+        // Filtro tolerante: cubre distintos nombres de campo que puedas usar
+        const filter = {
+            $or: [
+                { usuarioId: id },
+                { userId: id },
+                { 'usuario._id': mongoose.Types.ObjectId.isValid(id) ? mongoose.Types.ObjectId(id) : id }
+            ]
+        };
+
+        const result = await Registro.deleteMany(filter).exec();
+
+        return res.status(200).json({
+            ok: true,
+            deletedCount: result.deletedCount ?? 0
+        });
+    } catch (err) {
+        console.error('DELETE /api/usuarios/:id/registros error', err);
+        return res.status(500).json({ error: 'error_borrando_registros' });
     }
 });
 

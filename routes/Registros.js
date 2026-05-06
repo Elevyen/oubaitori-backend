@@ -130,10 +130,7 @@ router.get('/', authMiddleware, async (req, res, next) => {
     const usuario = req.usuario;
     const userIdRaw = resolveUserId(usuario);
     if (!userIdRaw) return res.status(401).json({ ok: false, error: 'no_autorizado' });
-
     const month = String(req.query.month || '').trim();
-
-
     const filter = {};
     const userIdObj = toObjectIdIfValid(userIdRaw);
     if (userIdObj) {
@@ -141,12 +138,10 @@ router.get('/', authMiddleware, async (req, res, next) => {
     } else {
       filter.userId = String(userIdRaw);
     }
-
     if (month && /^\d{4}-\d{2}$/.test(month)) {
       // buscar por fecha que empiece por YYYY-MM
       filter.fecha = { $regex: `^${month}` };
     }
-
     const docs = await RegistroEmocional.find(filter).sort({ fecha: -1, createdAt: -1 }).lean().exec();
 
     // Intentar desencriptar notaEncrypted para cada doc solo si el requester es owner

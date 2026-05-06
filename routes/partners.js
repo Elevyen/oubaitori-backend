@@ -20,7 +20,6 @@ function requireAdmin(req, res, next) {
     return res.status(403).json({ error: 'no_autorizado_admin' });
 }
 
-
 // GET /api/partners
 router.get('/', async (req, res) => {
     try {
@@ -31,7 +30,6 @@ router.get('/', async (req, res) => {
         return res.status(500).json({ error: 'Error mostrando compañeros' });
     }
 });
-
 // GET /api/partners/all  -> lista completa (admin)
 router.get('/all', authMiddleware, requireAdmin, async (req, res) => {
     try {
@@ -42,9 +40,6 @@ router.get('/all', authMiddleware, requireAdmin, async (req, res) => {
         return res.status(500).json({ error: 'Error mostrando compañeros' });
     }
 });
-
-
-
 // PUT /api/partners/:id  -> actualizar (admin)
 router.put('/:id', authMiddleware, requireAdmin, async (req, res) => {
     try {
