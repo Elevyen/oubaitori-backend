@@ -3,7 +3,13 @@ const express = require('express');
 const router = express.Router();
 const ContactModel = require('../models/contacto');
 const nodemailer = require('nodemailer');
+const SibApiV3Sdk = require('sib-api-v3-sdk');
+const defaultClient = SibApiV3Sdk.ApiClient.instance;
 
+const apiKey = defaultClient.authentications['api-key'];
+apiKey.apiKey = process.env.SIB_API_KEY;
+const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
+const transactionalEmail = new SibApiV3Sdk.SendSmtpEmail();
 let authMiddleware;
 try {
     authMiddleware = require('../middleware/auth');
@@ -60,11 +66,6 @@ function createTransporter() {
         socketTimeout: 10000
     });
 }
-
-/**
- * POST /api/contacto
- * Guarda contacto y envía correo en background.
- */
 router.post('/', async (req, res) => {
     try {
         const usuario = req.usuario || null;
@@ -95,71 +96,152 @@ router.post('/', async (req, res) => {
         // Responder inmediatamente
         res.status(201).json({ ok: true, message: 'received', contactId: doc._id, email: doc.email });
 
-        // Envío en background (no bloquea la respuesta)
-        (async () => {
-            let transporter;
-            try {
-                transporter = createTransporter();
-            } catch (errTrans) {
-                // Guardar intento fallido en BD para auditoría/reintento
-                try {
-                    await ContactModel.findByIdAndUpdate(doc._id, {
-                        $inc: { mailAttempts: 1 },
-                        mailError: String(errTrans.message).slice(0, 1000),
-                        lastMailErrorAt: new Date()
-                    });
-                } catch (e) { }
-                return;
-            }
+        const subject = `[${doc.tipo}] ${doc.titulo}`;
 
-            try {
-                const recipient = process.env.CONTACT_RECIPIENT || process.env.SUPPORT_EMAIL || 'support@tu-dominio.com';
-                const fromAddress = process.env.SMTP_FROM || process.env.SMTP_USER || `no-reply@${process.env.DOMAIN || 'tu-dominio.com'}`;
+        const fromAddress =
+            process.env.SMTP_FROM ||
+            process.env.SMTP_USER ||
+            `no-reply@${process.env.DOMAIN || 'tu-dominio.com'}`;
 
-                const subject = `[${doc.tipo}] ${doc.titulo}`;
-                const textBody = [
-                    `Tipo: ${doc.tipo}`,
-                    `Título: ${doc.titulo}`,
-                    `Email remitente: ${doc.email}`,
-                    `Mensaje:`,
-                    doc.mensaje,
-                    '',
-                    `ID contacto: ${doc._id}`,
-                    `Fecha: ${doc.createdAt}`
-                ].join('\n\n');
-
-                const mailOptions = {
-                    from: `"Tu App" <${fromAddress}>`,
-                    to: recipient,
-                    subject,
-                    text: textBody,
-                    replyTo: doc.email
-                };
-
-                const info = await transporter.sendMail(mailOptions);
-
-                // Actualizar documento como notificado
-                try {
-                    await ContactModel.findByIdAndUpdate(doc._id, { notified: true, notifiedAt: new Date() });
-                } catch (updErr) {
-                    // no interrumpir el flujo por fallo de actualización
+        const sendSmtpEmail = {
+            sender: {
+                email: fromAddress,
+                name: 'TFG'
+            },
+            to: [
+                {
+                    email: fromAddress,
+                    name: 'Yen Quintero Moreno'
                 }
-            } catch (err) {
-                // Registrar fallo de envío y contador para reintentos
-                try {
-                    await ContactModel.findByIdAndUpdate(doc._id, {
-                        $inc: { mailAttempts: 1 },
-                        mailError: String(err.message || err).slice(0, 1000),
-                        lastMailErrorAt: new Date()
-                    });
-                } catch (updErr) { }
-            }
-        })();
+            ],
+            replyTo: {
+                email: doc.email
+            },
+            subject,
+            textContent: [
+                `Tipo: ${doc.tipo}`,
+                `Título: ${doc.titulo}`,
+                `Email remitente: ${doc.email}`,
+                `Mensaje:`,
+                doc.mensaje,
+                '',
+                `ID contacto: ${doc._id}`,
+                `Fecha: ${doc.createdAt}`
+            ].join('\n\n')
+        };
+
+        apiInstance.sendTransacEmail(sendSmtpEmail)
+            .then((data) => {
+                console.log('Email enviado:', data);
+            })
+            .catch((error) => {
+                console.error('Brevo error:', error.response?.body || error);
+            });
 
     } catch (err) {
         return res.status(500).json({ ok: false, message: 'internal_server_error' });
     }
 });
+/**
+ * POST COMENTADO DEBIDO A QUE EL ENVIO CON GOOGLE NO FUNCIONA EN RENDER
+ * POST /api/contacto
+ * Guarda contacto y envía correo en background.
+ */
+//router.post('/', async (req, res) => {
+//    try {
+//        const usuario = req.usuario || null;
+//        const userId = resolveUserId(usuario);
+//        const userEmailFromAuth = resolveUserEmail(usuario);
+//
+//        const { tipo, email: emailFromBody, titulo, mensaje } = req.body || {};
+//
+//        if (!tipo || !['sugerencia', 'incidencia'].includes(tipo)) {
+//            return res.status(400).json({ ok: false, message: 'invalid_tipo' });
+//        }
+//
+//        const finalEmail = userEmailFromAuth ? String(userEmailFromAuth).trim() : (emailFromBody ? String(emailFromBody).trim() : null);
+//        if (!finalEmail) return res.status(400).json({ ok: false, message: 'missing_email' });
+//        if (!titulo || String(titulo).trim().length === 0) return res.status(400).json({ ok: false, message: 'missing_titulo' });
+//        if (!mensaje || String(mensaje).trim().length === 0) return res.status(400).json({ ok: false, message: 'missing_mensaje' });
+//
+//        const doc = await ContactModel.create({
+//            usuarioId: userId || null,
+//            tipo,
+//            email: finalEmail,
+//            titulo: String(titulo).trim(),
+//            mensaje: String(mensaje).trim(),
+//            createdAt: new Date(),
+//            meta: { ip: req.ip, userAgent: req.get('User-Agent') || null }
+//        });
+//
+//        // Responder inmediatamente
+//        res.status(201).json({ ok: true, message: 'received', contactId: doc._id, email: doc.email });
+//
+//        // Envío en background (no bloquea la respuesta)
+//        (async () => {
+//            let transporter;
+//            try {
+//                transporter = createTransporter();
+//            } catch (errTrans) {
+//                // Guardar intento fallido en BD para auditoría/reintento
+//                try {
+//                    await ContactModel.findByIdAndUpdate(doc._id, {
+//                        $inc: { mailAttempts: 1 },
+//                        mailError: String(errTrans.message).slice(0, 1000),
+//                        lastMailErrorAt: new Date()
+//                    });
+//                } catch (e) { }
+//                return;
+//            }
+//
+//            try {
+//                const recipient = process.env.CONTACT_RECIPIENT || process.env.SUPPORT_EMAIL || 'support@tu-dominio.com';
+//                const fromAddress = process.env.SMTP_FROM || process.env.SMTP_USER || `no-reply@${process.env.DOMAIN || 'tu-dominio.com'}`;
+//
+//                const subject = `[${doc.tipo}] ${doc.titulo}`;
+//                const textBody = [
+//                    `Tipo: ${doc.tipo}`,
+//                    `Título: ${doc.titulo}`,
+//                    `Email remitente: ${doc.email}`,
+//                    `Mensaje:`,
+//                    doc.mensaje,
+//                    '',
+//                    `ID contacto: ${doc._id}`,
+//                    `Fecha: ${doc.createdAt}`
+//                ].join('\n\n');
+//
+//                const mailOptions = {
+//                    from: `"Tu App" <${fromAddress}>`,
+//                    to: recipient,
+//                    subject,
+//                    text: textBody,
+//                    replyTo: doc.email
+//                };
+//
+//                const info = await transporter.sendMail(mailOptions);
+//
+//                // Actualizar documento como notificado
+//                try {
+//                    await ContactModel.findByIdAndUpdate(doc._id, { notified: true, notifiedAt: new Date() });
+//                } catch (updErr) {
+//                    // no interrumpir el flujo por fallo de actualización
+//                }
+//            } catch (err) {
+//                // Registrar fallo de envío y contador para reintentos
+//                try {
+//                    await ContactModel.findByIdAndUpdate(doc._id, {
+//                        $inc: { mailAttempts: 1 },
+//                        mailError: String(err.message || err).slice(0, 1000),
+//                        lastMailErrorAt: new Date()
+//                    });
+//                } catch (updErr) { }
+//            }
+//        })();
+//
+//    } catch (err) {
+//        return res.status(500).json({ ok: false, message: 'internal_server_error' });
+//    }
+//});
 
 /**
  * GET /api/contacto

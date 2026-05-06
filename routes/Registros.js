@@ -8,13 +8,6 @@ const { encrypt: encryptNota, decrypt: decryptNota } = require('../utils/encript
 
 const MAX_REGISTROS_POR_DIA = 1;
 
-function generarId() {
-  try {
-    if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
-  } catch (e) {  }
-  return crypto.randomBytes(16).toString('hex');
-}
-
 function isDuplicateKeyError(err) {
   return err && (err.code === 11000 || (err.name === 'MongoServerError' && err.code === 11000));
 }
@@ -23,7 +16,7 @@ function normalizeEmocion(e) {
   if (!e || typeof e !== 'object') return null;
   const tipo = (e.tipo && ['buena', 'mala', 'neutra'].includes(e.tipo)) ? e.tipo : 'neutra';
   return {
-    id: String(e.id || e.key || e._id || generarId()),
+    id: String(e.id || e.key || e._id),
     label: String(e.label || e.name || 'Desconocida'),
     emoji: e.emoji || '',
     color: e.color || '',
@@ -32,9 +25,6 @@ function normalizeEmocion(e) {
   };
 }
 
-function sha256Hex(text) {
-  return crypto.createHash('sha256').update(String(text || '')).digest('hex');
-}
 function extractPlainNota(payload) {
   if (!payload || typeof payload !== 'object') return null;
   const candidates = [payload.nota, payload.note, payload.noteText, payload.text];
@@ -44,13 +34,13 @@ function extractPlainNota(payload) {
   return null;
 }
 
-// Helper: normalizar salida del documento para la API
+// normaliza salida del documento para la API
 function formatRegistro(doc) {
   if (!doc) return null;
 
   const obj = (doc && typeof doc.toObject === 'function') ? doc.toObject() : doc;
 
-  // Asegurar que emociones tengan ids como string
+  // Asegura que emociones tengan ids como string
   const emociones = Array.isArray(obj.emociones)
     ? obj.emociones.map(e => {
       if (!e || typeof e !== 'object') return e;
@@ -60,15 +50,15 @@ function formatRegistro(doc) {
         emoji: e.emoji || '',
         color: e.color || '',
         textColor: e.textColor || '',
-        tipo: e.tipo || null
+        tipo: e.tipo || 'neutra'
       };
     })
     : [];
 
-  // Normalizar campos de id a string para evitar ObjectId en el cliente
+  // Normaliza campos de id a string para evitar ObjectId en el cliente
   const _id = obj._id !== undefined ? String(obj._id) : undefined;
   const id = obj.id !== undefined ? String(obj.id) : (_id || undefined);
-  const userId = obj.userId !== undefined ? String(obj.userId) : (obj.usuarioId !== undefined ? String(obj.usuarioId) : undefined);
+  const userId = obj.userId !== undefined ? String(obj.userId) : undefined;
 
   return {
     _id: _id,
@@ -78,24 +68,31 @@ function formatRegistro(doc) {
     hora: obj.hora,
     emociones: emociones,
     intensidad: obj.intensidad,
-    etiquetas: obj.etiquetas,
-    notaHash: obj.notaHash,
-    nota: obj.nota ?? null,
-    meta: obj.meta,
+    etiquetas: obj.etiquetas || [],
+    notaEncrypted: obj.notaEncrypted || null,
     createdAt: obj.createdAt,
     updatedAt: obj.updatedAt,
-    version: obj.version,
-    synced: obj.synced
+    version: obj.version
   };
 }
 
-// Util: resolver userId (acepta objeto, string, payload)
+function todayDDMMYYYY() {
+  const iso = new Date().toLocaleDateString('sv-SE'); // "YYYY-MM-DD"
+  const [yyyy, mm, dd] = String(iso).split('-');
+  return `${dd}-${mm}-${yyyy}`;
+}
+
+function sanitizeEtiquetas(raw = []) {
+  if (!Array.isArray(raw)) return [];
+  return Array.from(new Set(raw.map(t => String(t || '').trim().toLowerCase()).filter(Boolean)));
+}
+
+// Resuelve userId (acepta objeto, string, payload)
 function resolveUserId(usuario) {
   if (!usuario) return null;
   if (typeof usuario === 'string') return usuario;
   if (usuario._id) return usuario._id;
   if (usuario.id) return usuario.id;
-  // si authMiddleware puso el payload del token
   if (usuario.payload && (usuario.payload.id || usuario.payload._id)) return usuario.payload.id || usuario.payload._id;
   return null;
 }
@@ -103,34 +100,30 @@ function resolveUserId(usuario) {
 // Util: convertir a ObjectId de (devuelve ObjectId o null)
 function toObjectIdIfValid(value) {
   if (value === null || value === undefined) return null;
-
-  // Si ya es un objeto que parece un ObjectId de BSON, devolverlo
   try {
     if (typeof value === 'object') {
       if (value._bsontype === 'ObjectID' || value._bsontype === 'ObjectId') return value;
       if (value.constructor && (value.constructor.name === 'ObjectID' || value.constructor.name === 'ObjectId')) return value;
     }
-  } catch (e) {  }
-
+  } catch (e) { }
   const asString = String(value);
-
-  // Validar con la utilidad de mongoose
   if (mongoose.isValidObjectId(asString)) {
-    // Crear con new para evitar el error "cannot be invoked without 'new'"
     return new mongoose.Types.ObjectId(asString);
   }
-
   return null;
 }
 
-// GET /api/registros?month=YYYY-MM
-// Devuelve registros del usuario autenticado para el mes indicado
+/* GET /api/registros?month=YYYY-MM
+   Devuelve registros del usuario autenticado para el mes indicado.
+   Nota: el modelo guarda fecha en DD-MM-YYYY,  convertimos con regex ^\\d{2}-MM-YYYY
+*/
 router.get('/', authMiddleware, async (req, res, next) => {
   try {
     const usuario = req.usuario;
     const userIdRaw = resolveUserId(usuario);
     if (!userIdRaw) return res.status(401).json({ ok: false, error: 'no_autorizado' });
-    const month = String(req.query.month || '').trim();
+
+    const month = String(req.query.month || '').trim(); // espera YYYY-MM
     const filter = {};
     const userIdObj = toObjectIdIfValid(userIdRaw);
     if (userIdObj) {
@@ -138,13 +131,16 @@ router.get('/', authMiddleware, async (req, res, next) => {
     } else {
       filter.userId = String(userIdRaw);
     }
+
     if (month && /^\d{4}-\d{2}$/.test(month)) {
-      // buscar por fecha que empiece por YYYY-MM
-      filter.fecha = { $regex: `^${month}` };
+      const [yyyy, mm] = month.split('-');
+      // fecha almacenada como DD-MM-YYYY regex para cualquier día de ese mes y año
+      filter.fecha = { $regex: `^\\d{2}-${mm}-${yyyy}` };
     }
+
     const docs = await RegistroEmocional.find(filter).sort({ fecha: -1, createdAt: -1 }).lean().exec();
 
-    // Intentar desencriptar notaEncrypted para cada doc solo si el requester es owner
+    // Intenta desencriptar notaEncrypted para cada doc solo si el requester es owner
     try {
       const resolvedUserId = resolveUserId(req.usuario);
       const authId = resolvedUserId ? String(resolvedUserId) : null;
@@ -152,21 +148,21 @@ router.get('/', authMiddleware, async (req, res, next) => {
       if (authId && Array.isArray(docs)) {
         for (let i = 0; i < docs.length; i++) {
           const doc = docs[i];
-          // recolectar candidatos a owner y normalizarlos a string (evita problemas con ObjectId)
-          const ownerCandidates = [
-            doc && doc.usuarioId,
+          const usuariosCandidatos = [
             doc && doc.userId,
-            doc && doc.usuario,
-            doc && doc.user
+            doc && doc.usuarioId,
+            doc && doc.user,
+            doc && doc.usuario
           ].filter(Boolean).map(v => {
             try { return String(v); } catch { return '' + v; }
           }).filter(Boolean);
 
-          const isOwner = ownerCandidates.length > 0 && authId && ownerCandidates.includes(authId);
+          const isOwner = usuariosCandidatos.length > 0 && authId && usuariosCandidatos.includes(authId);
           if (isOwner) {
             if (doc.notaEncrypted) {
               try {
-                doc.nota = decryptNota(doc.notaEncrypted);
+                const maybePromise = decryptNota(doc.notaEncrypted);
+                doc.nota = (maybePromise && typeof maybePromise.then === 'function') ? await maybePromise : maybePromise;
               } catch (e) {
                 console.warn('decryptNota failed for list item id', doc._id || doc.id, e && e.message ? e.message : e);
                 doc.nota = null;
@@ -180,7 +176,6 @@ router.get('/', authMiddleware, async (req, res, next) => {
             // Ocultar campos sensibles para no-owners
             delete doc.nota;
             delete doc.notaEncrypted;
-            delete doc.notaHash;
           }
         }
       }
@@ -191,7 +186,7 @@ router.get('/', authMiddleware, async (req, res, next) => {
     return res.json({ ok: true, registros: docs.map(d => formatRegistro(d)) });
   } catch (err) {
     console.error('GET /api/registros error:', err && err.stack ? err.stack : err);
-    return res.status(500).json({ ok: false, error: 'error_servidor', message: err.message });
+    return res.status(500).json({ ok: false, error: 'Error servidor', message: err.message });
   }
 });
 
@@ -199,66 +194,54 @@ router.get('/', authMiddleware, async (req, res, next) => {
 router.get('/:id', authMiddleware, async (req, res) => {
   try {
     const rawId = String(req.params.id || '').trim();
-    if (!rawId) return res.status(400).json({ ok: false, message: 'missing_id' });
-
-    // debug request
-    console.debug('GET /api/registros/:id - incoming rawId:', rawId, 'user:', req.usuario && (req.usuario._id || req.usuario.id));
+    if (!rawId) return res.status(400).json({ ok: false, message: 'ID no encontrado' });
 
     // construir filtros
     const filters = [];
     if (mongoose.isValidObjectId(rawId)) {
-      try { filters.push({ _id: new mongoose.Types.ObjectId(rawId) }); } catch (e) { /* ignore */ }
+      try { filters.push({ _id: new mongoose.Types.ObjectId(rawId) }); } catch (e) {  }
     }
     filters.push({ id: rawId }, { uuid: rawId }, { externalId: rawId });
 
-    console.debug('GET /api/registros/:id - filters to try:', JSON.stringify(filters));
-
     // búsqueda principal
     let found = await RegistroEmocional.findOne({ $or: filters }).lean().exec();
-    console.debug('GET /api/registros/:id - primary findOne result exists:', !!found);
 
     // fallback: si no encontrado y rawId parece ObjectId, buscar por la cadena en campos textuales
     if (!found && mongoose.isValidObjectId(rawId)) {
       const rawStr = String(rawId);
-      console.debug('GET /api/registros/:id - fallback search by string fields for:', rawStr);
       found = await RegistroEmocional.findOne({
-        $or: [{ id: rawStr }, { usuarioId: rawStr }, { userId: rawStr }]
+        $or: [{ id: rawStr }, { userId: rawStr }]
       }).lean().exec();
-      console.debug('GET /api/registros/:id - fallback findOne result exists:', !!found);
     }
 
     if (!found) {
-      console.debug('GET /api/registros/:id - not found after all attempts for id:', rawId);
-      return res.status(404).json({ ok: false, message: 'not_found' });
+      return res.status(404).json({ ok: false, message: 'No encontrado' });
     }
 
-    // ownership candidates normalizados
     const resolvedUserId = resolveUserId(req.usuario);
     const authId = resolvedUserId ? String(resolvedUserId) : null;
-    const ownerCandidatesRaw = [
-      found.usuarioId, found.userId, found.user, found.usuario, found.usuario_id, found.usuarioID
+    const usuariosCandidatosRaw = [
+      found.userId, found.usuarioId, found.user, found.usuario
     ];
-    const ownerCandidates = ownerCandidatesRaw.filter(Boolean).map(v => {
+    const usuariosCandidatos = usuariosCandidatosRaw.filter(Boolean).map(v => {
       try { return String(v); } catch { return '' + v; }
     }).filter(Boolean);
 
-    console.debug('ownership check -> authId:', authId, 'ownerCandidates:', ownerCandidates);
-
-    if (authId && ownerCandidates.length > 0 && !ownerCandidates.includes(authId)) {
-      return res.status(403).json({ ok: false, message: 'forbidden' });
+    if (authId && usuariosCandidatos.length > 0 && !usuariosCandidatos.includes(authId)) {
+      return res.status(403).json({ ok: false, message: 'Error 403' });
     }
-    if (authId && ownerCandidates.length === 0) {
-      console.warn('ownership check -> no owner field found for id:', rawId);
-      return res.status(403).json({ ok: false, message: 'forbidden' });
+    if (authId && usuariosCandidatos.length === 0) {
+      console.warn('ownership check no owner field found for id:', rawId);
+      return res.status(403).json({ ok: false, message: 'Error 403' });
     }
 
-    // desencriptar nota para owner y eliminar ciphertext antes de devolver
-    const isOwner = authId && ownerCandidates.length > 0 && ownerCandidates.includes(authId);
+    // desencripta nota para owner y eliminar ciphertext antes de devolver
+    const isOwner = authId && usuariosCandidatos.length > 0 && usuariosCandidatos.includes(authId);
     if (isOwner) {
       if (!Object.prototype.hasOwnProperty.call(found, 'notaEncrypted')) found.notaEncrypted = null;
-      if (!Object.prototype.hasOwnProperty.call(found, 'notaHash')) found.notaHash = null;
       try {
-        found.nota = found.notaEncrypted ? decryptNota(found.notaEncrypted) : null;
+        const maybePromise = decryptNota(found.notaEncrypted);
+        found.nota = (maybePromise && typeof maybePromise.then === 'function') ? await maybePromise : maybePromise;
       } catch (e) {
         console.warn('decryptNota failed for id:', rawId, e && e.message ? e.message : e);
         found.nota = null;
@@ -267,97 +250,66 @@ router.get('/:id', authMiddleware, async (req, res) => {
     } else {
       delete found.nota;
       delete found.notaEncrypted;
-      delete found.notaHash;
     }
 
     return res.status(200).json({ ok: true, registro: found });
   } catch (err) {
     console.error('GET /api/registros/:id error:', err && err.stack ? err.stack : err);
-    return res.status(500).json({ ok: false, message: 'internal_server_error', detail: err.message || String(err) });
+    return res.status(500).json({ ok: false, message: 'Error servidor', detail: err.message || String(err) });
   }
 });
 
 // POST /api/registros
 router.post('/', authMiddleware, async (req, res, next) => {
   try {
-    console.log('POST /api/registros - headers:', req.headers);
-    console.log('POST /api/registros - body:', req.body);
-    console.log('POST /api/registros - req.usuario:', req.usuario);
-
-    // helper local para extraer texto de nota
     const payload = req.body || {};
-    // resolver usuario
     const usuarioRaw = resolveUserId(req.usuario);
-    if (!usuarioRaw) return res.status(401).json({ ok: false, error: 'no_autorizado' });
+    if (!usuarioRaw) return res.status(401).json({ ok: false, error: 'No autorizado' });
 
-    // validar y convertir userId si el esquema espera ObjectId
+    // valida y convertir userId (modelo espera ObjectId)
     let userIdForSave = toObjectIdIfValid(usuarioRaw);
     if (!userIdForSave) {
-      // si no es ObjectId válido, lo guardamos como string (si tu esquema exige ObjectId, cambia esto)
+      // si no es ObjectId válido, lo guardamos como string
       userIdForSave = String(usuarioRaw);
       console.warn('userId no es ObjectId válido, se guardará como string:', usuarioRaw);
     }
 
-    // validaciones básicas
-    if (!payload.fecha || !/^\d{4}-\d{2}-\d{2}$/.test(String(payload.fecha))) {
-      return res.status(400).json({ ok: false, error: 'falta_fecha', message: 'Campo fecha requerido (YYYY-MM-DD).' });
+    // validaciones fecha en DD-MM-YYYY (modelo)
+    let fechaInput = payload.fecha;
+    if (fechaInput instanceof Date) {
+      const iso = fechaInput.toLocaleDateString('sv-SE'); // YYYY-MM-DD
+      const [yyyy, mm, dd] = String(iso).split('-');
+      fechaInput = `${dd}-${mm}-${yyyy}`;
+    }
+    if (!fechaInput || !/^\d{2}-\d{2}-\d{4}$/.test(String(fechaInput))) {
+      return res.status(400).json({ ok: false, error: 'falta_fecha', message: 'Campo fecha requerido (DD-MM-YYYY).' });
     }
 
     const intensidad = Number(payload.intensidad ?? payload.intensity ?? 0);
     if (isNaN(intensidad) || intensidad < 0 || intensidad > 10) {
-      return res.status(400).json({ ok: false, error: 'intensidad_invalida' });
+      return res.status(400).json({ ok: false, error: 'Intensidad incorrecta' });
     }
 
     if (payload.nota && String(payload.nota).length > 2000) {
-      return res.status(400).json({ ok: false, error: 'nota_demasiado_larga' });
+      return res.status(400).json({ ok: false, error: 'Nota muy larga' });
     }
 
-    // normalizar emociones con defensas extra
+    // normaliza emociones
     const emocionesRaw = Array.isArray(payload.emociones) ? payload.emociones : (Array.isArray(payload.emotions) ? payload.emotions : []);
     const emociones = emocionesRaw
       .map(normalizeEmocion)
-      .filter(e => e && e.id && e.label); // asegurar campos mínimos
+      .filter(e => e && e.id && e.label);
 
-    // generar id si falta
-    const id = payload.id ? String(payload.id) : generarId();
-
-    // EXTRA: extraer texto de nota desde variantes (nota, note, noteText, text)
+    // extrae texto de nota desde variantes (nota, note, noteText, text)
     const plainNota = extractPlainNota(payload);
     const notaText = plainNota !== null ? String(plainNota) : '';
 
-    // calcular notaHash en servidor (usar sha256Hex si existe, si no fallback a crypto)
-    let notaHash = '';
-    try {
-      if (typeof sha256Hex === 'function') {
-        notaHash = notaText ? sha256Hex(notaText) : '';
-      } else {
-        notaHash = notaText ? crypto.createHash('sha256').update(String(notaText || ''), 'utf8').digest('hex') : '';
-      }
-    } catch (e) {
-      // fallback seguro
-      try {
-        notaHash = notaText ? crypto.createHash('sha256').update(String(notaText || ''), 'utf8').digest('hex') : '';
-      } catch (e2) {
-        console.warn('No se pudo calcular notaHash:', e2 && e2.message ? e2.message : e2);
-        notaHash = '';
-      }
-    }
-
-    // normalizar hora: si viene string intentar parsear, si no usar now
-    let horaVal = null;
-    if (payload.hora) {
-      const parsed = new Date(payload.hora);
-      horaVal = isNaN(parsed.getTime()) ? new Date() : parsed;
-    } else {
-      horaVal = new Date();
-    }
-
-    // ENCRIPTAR la nota en servidor y preparar notaEncrypted
+    // ENCRIPTA la nota en servidor y preparar notaEncrypted (solo guardamos notaEncrypted)
     let notaEncrypted = null;
     try {
       if (notaText !== '') {
-        // encryptNota lanzará si falta NOTA_MASTER_KEY; capturamos y devolvemos error controlado
-        notaEncrypted = encryptNota(String(notaText));
+        const maybePromise = encryptNota(String(notaText));
+        notaEncrypted = (maybePromise && typeof maybePromise.then === 'function') ? await maybePromise : maybePromise;
       } else {
         notaEncrypted = null;
       }
@@ -369,37 +321,30 @@ router.post('/', authMiddleware, async (req, res, next) => {
     const safePayload = {
       id,
       userId: userIdForSave,
-      fecha: payload.fecha,
-      hora: horaVal,
+      fecha: fechaInput,
+      hora: payload.hora ? new Date(payload.hora) : new Date(),
       emociones,
       intensidad,
       etiquetas: Array.isArray(payload.etiquetas) ? payload.etiquetas : (Array.isArray(payload.tags) ? payload.tags : []),
-      notaHash,
-      notaEncrypted,            // guardamos la nota encriptada
-      nota: null,               // mantener campo legacy vacío por seguridad (texto plano no se guarda)
-      meta: payload.meta || {},
-      version: payload.version || 1,
-      synced: payload.synced !== undefined ? !!payload.synced : true
+      notaEncrypted: notaEncrypted ?? null,
+      version: payload.version || 1
     };
 
-    // Intentar guardar con manejo explícito de errores de validación y duplicados
     const doc = new RegistroEmocional(safePayload);
     try {
       await doc.save();
-      // devolver objeto limpio
       const out = doc.toObject ? doc.toObject() : doc;
       if (out._id) out.id = String(out._id);
       return res.status(201).json({ ok: true, registro: formatRegistro(out) });
     } catch (errSave) {
       console.error('POST /api/registros - save error:', errSave && errSave.stack ? errSave.stack : errSave);
 
-      // Detección de error de clave duplicada (Mongo E11000)
+      // Detección de error de clave duplicada (Mongo E11000) fallback
       if (isDuplicateKeyError(errSave) || (errSave && (errSave.code === 11000 || errSave.code === 11001))) {
-        // Intentar devolver información útil: si errSave.keyValue existe, incluirla
         console.warn('Duplicate key on create:', errSave.keyValue || errSave.message || errSave);
         return res.status(409).json({
           ok: false,
-          error: 'limite_dia_alcanzado',
+          error: 'Límite día',
           message: 'Ya existe un registro para ese día.',
           detalle: errSave.keyValue || errSave.message || null
         });
@@ -409,29 +354,27 @@ router.post('/', authMiddleware, async (req, res, next) => {
         return res.status(400).json({ ok: false, error: 'validation', details: errSave.errors });
       }
 
-      // Otros errores al guardar: propagar al catch externo para logging centralizado
       throw errSave;
     }
   } catch (err) {
     console.error('CRÍTICO POST /api/registros error completo:', err && err.stack ? err.stack : err);
-    // Responder con detalle mínimo para el cliente y loguear stack completo en servidor
     return res.status(500).json({
       ok: false,
       error: 'error_servidor',
-      message: err.message || 'internal_server_error',
+      message: err.message || 'Error servidor',
       detalle: err.stack || String(err)
     });
   }
 });
 
-// PUT /api/registros/:id -> actualizar registro (solo si pertenece al usuario)
+// PUT /api/registros/:id actualizar registro (solo si pertenece al usuario)
 router.put('/:id', authMiddleware, async (req, res) => {
   try {
     const rawId = String(req.params.id || '').trim();
-    if (!rawId) return res.status(400).json({ ok: false, message: 'missing_id' });
+    if (!rawId) return res.status(400).json({ ok: false, message: 'No se encuentra ID' });
 
     const resolvedUserId = resolveUserId(req.usuario);
-    if (!resolvedUserId) return res.status(401).json({ ok: false, message: 'no_autorizado' });
+    if (!resolvedUserId) return res.status(401).json({ ok: false, message: 'No autorizado' });
 
     // construir filtros para localizar el documento por id
     const filters = [];
@@ -442,89 +385,85 @@ router.put('/:id', authMiddleware, async (req, res) => {
 
     // buscar el documento primero (sin modificar)
     const found = await RegistroEmocional.findOne({ $or: filters }).lean().exec();
-    if (!found) return res.status(404).json({ ok: false, message: 'not_found' });
+    if (!found) return res.status(404).json({ ok: false, message: 'No se encontró' });
 
     // Normalizar candidatos a owner y authId a string
     const authId = resolvedUserId ? String(resolvedUserId) : null;
-    const ownerCandidatesRaw = [
-      found.usuarioId,
+    const usuariosCandidatosRaw = [
       found.userId,
+      found.usuarioId,
       found.user && found.user._id,
       found.usuario && found.usuario._id,
       found.usuarioId && String(found.usuarioId),
       found.userId && String(found.userId)
     ].filter(Boolean);
-    const ownerCandidates = ownerCandidatesRaw.map(v => String(v));
+    const usuariosCandidatos = usuariosCandidatosRaw.map(v => String(v));
 
-    console.debug('PUT /api/registros/:id ownership check', { rawId, authId, ownerCandidates });
-
-    // Si hay authId y hay candidatos y ninguno coincide -> forbidden
-    if (authId && ownerCandidates.length > 0 && !ownerCandidates.includes(authId)) {
-      return res.status(403).json({ ok: false, message: 'forbidden' });
+    if (authId && usuariosCandidatos.length > 0 && !usuariosCandidatos.includes(authId)) {
+      return res.status(403).json({ ok: false, message: 'Error 403' });
     }
 
     // Construir objeto de actualización con campos permitidos
-    const allowed = ['fecha', 'hora', 'emociones', 'intensidad', 'nota', 'etiquetas', 'meta', 'notaHash'];
+    const allowed = ['fecha', 'hora', 'emociones', 'intensidad', 'nota', 'etiquetas', 'version', 'notaEncrypted'];
     const updates = {};
     for (const k of allowed) if (req.body[k] !== undefined) updates[k] = req.body[k];
     updates.updatedAt = new Date();
 
-    // Si viene nota en el body, encriptarla y guardar notaEncrypted y notaHash en lugar de texto plano
+    // Si viene nota en el body, encriptarla y guardar notaEncrypted en lugar de texto plano
     if (req.body && (req.body.nota !== undefined || req.body.note !== undefined || req.body.noteText !== undefined || req.body.text !== undefined)) {
       const plainNota = extractPlainNota(req.body);
       try {
         if (plainNota !== null && plainNota !== undefined && String(plainNota).length > 0) {
-          updates.notaEncrypted = encryptNota(String(plainNota));
-          updates.notaHash = updates.notaHash || sha256Hex(String(plainNota));
-          // no guardar texto plano
+          const maybePromise = encryptNota(String(plainNota));
+          updates.notaEncrypted = (maybePromise && typeof maybePromise.then === 'function') ? await maybePromise : maybePromise;
           updates.nota = null;
         } else {
-          // si cliente envía nota vacía, borrar notaEncrypted y notaHash
+          // si cliente envía nota vacía, borrar notaEncrypted
           updates.notaEncrypted = null;
-          updates.notaHash = updates.notaHash || null;
           updates.nota = null;
         }
       } catch (e) {
         console.error('encryptNota error on update:', e && e.message ? e.message : e);
-        return res.status(500).json({ ok: false, error: 'encryption_error', detalle: String(e) });
+        return res.status(500).json({ ok: false, error: 'Error encriptado.', detalle: String(e) });
       }
     }
 
     if (Object.keys(updates).length === 0) {
-      return res.status(400).json({ ok: false, message: 'no_update_fields' });
+      return res.status(400).json({ ok: false, message: 'Sin campos actualizados.' });
     }
 
     // Ejecutar findOneAndUpdate sin upsert; usar returnDocument: 'after'
     const opts = { returnDocument: 'after', lean: true, upsert: false };
-    const finalFilter = { $or: filters }; // ya validamos propiedad arriba
+    const finalFilter = { $or: filters };
     const updated = await RegistroEmocional.findOneAndUpdate(finalFilter, { $set: updates }, opts).exec();
 
     if (!updated) {
-      // si no se actualizó, comprobar si existe pero pertenece a otro usuario
       const foundAny = await RegistroEmocional.findOne({ $or: filters }).lean().exec();
-      if (foundAny) return res.status(403).json({ ok: false, message: 'forbidden' });
-      return res.status(404).json({ ok: false, message: 'not_found' });
+      if (foundAny) return res.status(403).json({ ok: false, message: 'Error 403' });
+      return res.status(404).json({ ok: false, message: 'Error 404' });
     }
 
     return res.status(200).json({ ok: true, registro: updated });
   } catch (err) {
     console.error('PUT /api/registros/:id error:', err && err.stack ? err.stack : err);
-    return res.status(500).json({ ok: false, message: 'internal_server_error', detalle: err.message || String(err) });
+    return res.status(500).json({ ok: false, message: 'Error servidor', detalle: err.message || String(err) });
   }
 });
 
-// POST /api/registros/sincronizar -> procesar pendientes (items: [])
-// Procesa solo items que pertenezcan al usuario autenticado (seguridad)
-// POST /api/registros/sincronizar
+// POST /api/registros/sincronizar procesar pendientes (items: [])
 router.post("/sincronizar", authMiddleware, async (req, res) => {
   try {
     const items = Array.isArray(req.body.items) ? req.body.items : [];
     if (items.length === 0) return res.json({ ok: true, actualizados: [], rechazados: [] });
 
-    const usuarioId = String(req.usuario._id);
+    const usuarioIdRaw = resolveUserId(req.usuario);
+    if (!usuarioIdRaw) return res.status(401).json({ ok: false, error: 'no_autorizado' });
+
+    const usuarioIdObj = toObjectIdIfValid(usuarioIdRaw);
+    const usuarioIdForFilter = usuarioIdObj ? usuarioIdObj : String(usuarioIdRaw);
+
     const results = { actualizados: [], rechazados: [] };
 
-    // helper local para extraer texto de nota desde variantes
     function extractPlainNotaLocal(payload) {
       if (!payload || typeof payload !== 'object') return null;
       const candidates = [payload.nota, payload.note, payload.noteText, payload.text];
@@ -535,83 +474,70 @@ router.post("/sincronizar", authMiddleware, async (req, res) => {
     }
 
     for (const it of items) {
-      try {
-        const fecha = normalizeFecha(it.fecha);
-        if (!fecha) {
-          results.rechazados.push({ item: it, reason: "fecha_invalida" });
-          continue;
-        }
-        // No permitir fechas futuras o fuera de ventana
-        if (isFutureDate(fecha) || !isWithinLastNDays(fecha, 6)) {
-          results.rechazados.push({ item: it, reason: "fecha_fuera_ventana" });
-          continue;
-        }
-
-        // Preparar campos a setear en el upsert
-        const horaVal = it.hora ? new Date(it.hora) : new Date();
-        const emociones = Array.isArray(it.emociones) ? it.emociones : [];
-        const intensidad = typeof it.intensidad !== 'undefined' ? it.intensidad : null;
-        const etiquetas = Array.isArray(it.etiquetas) ? it.etiquetas : [];
-
-        // Nota: aceptar notaEncrypted si viene; si viene nota en texto plano, encriptar aquí
-        const incomingNotaEncrypted = it.notaEncrypted || it.notaEncrypted || null;
-        const plainNota = extractPlainNotaLocal(it);
-        let notaEncryptedToSave = null;
-        let notaHashToSave = it.notaHash || null;
-
-        try {
-          if (incomingNotaEncrypted) {
-            // Si el cliente ya envía notaEncrypted, la usamos tal cual
-            notaEncryptedToSave = incomingNotaEncrypted;
-            // si no hay notaHash, no podemos calcularlo sin desencriptar; si viene plainNota, calcular hash desde plainNota
-            if (!notaHashToSave && plainNota) {
-              notaHashToSave = crypto.createHash('sha256').update(String(plainNota || ''), 'utf8').digest('hex');
-            }
-          } else if (plainNota !== null && plainNota !== undefined) {
-            // Encriptar en servidor y calcular hash
-            notaEncryptedToSave = encryptNota(String(plainNota));
-            notaHashToSave = notaHashToSave || crypto.createHash('sha256').update(String(plainNota || ''), 'utf8').digest('hex');
-          } else {
-            // no hay nota ni notaEncrypted
-            notaEncryptedToSave = null;
-            notaHashToSave = notaHashToSave || null;
-          }
-        } catch (encErr) {
-          // Rechazar este item si falla la encriptación (por ejemplo falta NOTA_MASTER_KEY)
-          console.error('Error encriptando nota en sincronizar:', encErr && encErr.message ? encErr.message : encErr);
-          results.rechazados.push({ item: it, reason: "encryption_error", detail: String(encErr) });
-          continue;
-        }
-
-        // Upsert por usuarioId+fecha
-        const filter = { usuarioId, fecha };
-        const update = {
-          $set: {
-            hora: horaVal,
-            emociones,
-            intensidad,
-            etiquetas,
-            notaHash: notaHashToSave,
-            notaEncrypted: notaEncryptedToSave,
-            meta: it.meta || {}
-          }
-        };
-
-        // Mantener setDefaultsOnInsert para valores por defecto en el modelo
-        const updated = await RegistroEmocional.findOneAndUpdate(filter, update, { upsert: true, new: true, setDefaultsOnInsert: true });
-        results.actualizados.push({ fecha, id: updated._id });
-      } catch (e) {
-        console.error('Error procesando item en sincronizar:', e && e.stack ? e.stack : e);
-        results.rechazados.push({ item: it, reason: String(e) });
-      }
+  try {
+    // valida fecha: aceptar Date, luego valida DD-MM-YYYY
+    const fechaRaw = typeof normalizeFecha === 'function' ? normalizeFecha(it.fecha) : it.fecha;
+    let fecha = fechaRaw;
+    if (fecha instanceof Date) {
+      const iso = fecha.toLocaleDateString('sv-SE'); // "YYYY-MM-DD"
+      const [yyyy, mm, dd] = String(iso).split('-');
+      fecha = `${dd}-${mm}-${yyyy}`;
     }
+    if (!fecha || !/^\d{2}-\d{2}-\d{4}$/.test(String(fecha))) {
+      results.rechazados.push({ item: it, reason: "fecha_invalida" });
+      continue;
+    }
+
+    const horaVal = it.hora ? new Date(it.hora) : new Date();
+    const emociones = Array.isArray(it.emociones) ? it.emociones.map(normalizeEmocion).filter(Boolean) : [];
+    const intensidad = typeof it.intensidad !== 'undefined' ? it.intensidad : null;
+    const etiquetas = Array.isArray(it.etiquetas) ? it.etiquetas : [];
+
+    // Nota: aceptar notaEncrypted si viene; si viene nota en texto plano, encriptar aquí
+    const entradaNotaEncrypted = it.notaEncrypted || null;
+    const plainNota = extractPlainNotaLocal(it);
+    let guardarNotaEncrypted = null;
+
+    try {
+      if (entradaNotaEncrypted) {
+        guardarNotaEncrypted = entradaNotaEncrypted;
+      } else if (plainNota !== null && plainNota !== undefined) {
+        const maybePromise = encryptNota(String(plainNota));
+        guardarNotaEncrypted = (maybePromise && typeof maybePromise.then === 'function') ? await maybePromise : maybePromise;
+      } else {
+        guardarNotaEncrypted = null;
+      }
+    } catch (encErr) {
+      console.error('Error encriptando nota al sincronizar:', encErr && encErr.message ? encErr.message : encErr);
+      results.rechazados.push({ item: it, reason: "encryption_error", detail: String(encErr) });
+      continue;
+    }
+
+    // Upsert por userId+fecha: busca por userId y fecha; si existe actualiza, si no crea
+    const filter = { userId: usuarioIdForFilter, fecha };
+    const update = {
+      $set: {
+        hora: horaVal,
+        emociones,
+        intensidad,
+        etiquetas,
+        notaEncrypted: guardarNotaEncrypted
+      }
+    };
+
+    const updated = await RegistroEmocional.findOneAndUpdate(filter, update, { upsert: true, new: true, setDefaultsOnInsert: true });
+    results.actualizados.push({ fecha, id: updated._id });
+  } catch (e) {
+    console.error('Error procesando item en sincronizar:', e && e.stack ? e.stack : e);
+    results.rechazados.push({ item: it, reason: String(e) });
+  }
+}
 
     return res.json({ ok: true, ...results });
   } catch (err) {
     console.error("POST /api/registros/sincronizar error:", err && err.stack ? err.stack : err);
-    return res.status(500).json({ ok: false, error: "server_error", detalle: String(err) });
+    return res.status(500).json({ ok: false, error: "Error servidor", detalle: String(err) });
   }
 });
-
 
 module.exports = router;

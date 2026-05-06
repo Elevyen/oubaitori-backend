@@ -10,20 +10,17 @@ const EmocionSchema = new mongoose.Schema({
 }, { _id: false });
 
 const RegistroEmocionalSchema = new mongoose.Schema({
-  // id que puede venir del cliente o del servidor
   id: { type: String, required: true },
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'Usuario', index: true, required: true },
 
-  // Conservamos userId como ObjectId por compatibilidad añadimos usuarioId (string)
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'Usuario', index: true, required: false },
-  usuarioId: { type: String, required: false, index: true },
-
+  // fecha en formato DD-MM-YYYY
   fecha: {
     type: String,
     required: true,
     index: true,
     validate: {
-      validator: v => /^\d{4}-\d{2}-\d{2}$/.test(String(v || '')),
-      message: props => `${props.value} no es una fecha válida (esperado YYYY-MM-DD)`
+      validator: v => /^\d{2}-\d{2}-\d{4}$/.test(String(v || '')),
+      message: props => `${props.value} no es una fecha válida (esperado DD-MM-YYYY)`
     }
   },
   hora: { type: Date, default: Date.now },
@@ -31,44 +28,23 @@ const RegistroEmocionalSchema = new mongoose.Schema({
   intensidad: { type: Number, min: 0, max: 10, default: 0 },
   etiquetas: { type: [String], default: [] },
   notaEncrypted: { type: String, default: null },
-  notaHash: { type: String, maxlength: 128, default: '' },
-  meta: { type: mongoose.Schema.Types.Mixed, default: {} },
-  version: { type: Number, default: 1 },
-  synced: { type: Boolean, default: true }
+
+  version: { type: Number, default: 1 }
 }, {
   collection: 'registros_emocionales',
   timestamps: { createdAt: 'createdAt', updatedAt: 'updatedAt' }
 });
-
-/**
- * Índices
- *
- * - Índice compuesto único por usuario (string) + fecha para evitar duplicados
- *   en los flujos que usan usuarioId como string.
- * - Mantenemos también un índice por userId (ObjectId) para consultas que usen referencias.
- * - Índice único por id (cliente/servidor) para evitar duplicados por identificador.
- *
- * Usamos `sparse: true` en el índice compuesto para no bloquear documentos
- * que no tengan el campo `usuarioId` (compatibilidad con datos antiguos).
+/*
+ * Índice por userId y fecha para consultas por usuario/fecha
  */
-RegistroEmocionalSchema.index({ usuarioId: 1, fecha: 1 }, { unique: true, background: true });
-//RegistroEmocionalSchema.index({ usuarioId: 1, fecha: 1 }, { unique: true, sparse: true });
-//RegistroEmocionalSchema.index({ userId: 1, fecha: 1 }, { sparse: true });
-//RegistroEmocionalSchema.index({ id: 1 }, { unique: true, sparse: true });
-
-// Normalizaciones antes de guardar
-RegistroEmocionalSchema.pre('save', async function () {
-  // Si existe userId (ObjectId) y no existe usuarioId (string), sincronizar ambos
+RegistroEmocionalSchema.index({ userId: 1, fecha: 1 }, { background: true });
+RegistroEmocionalSchema.index({ id: 1 }, { background: true });
+/**
+ * Normalizaciones antes de guardar
+ * - Verificación de formato DD-MM-YYYY para fecha
+ */
+RegistroEmocionalSchema.pre('save', function () {
   try {
-    if (this.userId && !this.usuarioId) {
-      // Guardar como string para compatibilidad con clientes que comparan strings
-      this.usuarioId = String(this.userId);
-    } else if (this.usuarioId && !this.userId) {
-      // No intentamos convertir string a ObjectId automáticamente porque puede fallar;
-      // dejamos userId vacío y usamos usuarioId para las comprobaciones de propiedad.
-    }
-
-    // normalizar etiquetas: trim, lowercase, únicas
     if (Array.isArray(this.etiquetas)) {
       this.etiquetas = Array.from(
         new Set(
@@ -78,27 +54,39 @@ RegistroEmocionalSchema.pre('save', async function () {
         )
       );
     }
-
-    // asegurar emociones válidas (ya validadas por sub-schema)
+    // Asegurar que emociones es array y filtrar solo campos permitidos
     if (!Array.isArray(this.emociones)) this.emociones = [];
 
-    // asegurar que id existe y es string
-    if (this.id && typeof this.id !== 'string') {
-      this.id = String(this.id);
-    }
-
-    // asegurar fecha en formato string
+    const allowedKeys = ['id', 'label', 'emoji', 'color', 'textColor', 'tipo'];
+    this.emociones = this.emociones
+      .filter(e => e && (typeof e.id === 'string' || typeof e.label === 'string'))
+      .map(e => {
+        const out = {};
+        for (const k of allowedKeys) {
+          if (Object.prototype.hasOwnProperty.call(e, k) && e[k] !== undefined && e[k] !== null) {
+            out[k] = e[k];
+          }
+        }
+        // asegurar id y label como strings
+        if (out.id && typeof out.id !== 'string') out.id = String(out.id);
+        if (!out.id && out.label) out.id = String(out.label).toLowerCase().replace(/\s+/g, '_');
+        if (!out.label && out.id) out.label = String(out.id);
+        // tipo por defecto si falta
+        if (!out.tipo) out.tipo = 'neutra';
+        return out;
+      });
+    // Asegurar id principal como string
+    if (this.id && typeof this.id !== 'string') this.id = String(this.id);
+    // Si fecha viene como Date, convertir a DD-MM-YYYY; si viene como string, dejamos que la validación del schema verifique el formato
     if (this.fecha && this.fecha instanceof Date) {
       const d = this.fecha;
-      const yyyy = d.getFullYear();
-      const mm = String(d.getMonth() + 1).padStart(2, '0');
       const dd = String(d.getDate()).padStart(2, '0');
-      this.fecha = `${yyyy}-${mm}-${dd}`;
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const yyyy = d.getFullYear();
+      this.fecha = `${dd}-${mm}-${yyyy}`;
     }
   } catch (err) {
-    // No bloquear el save por errores menores de normalización; dejar que el flujo principal
-    // maneje errores de validación si los hubiera.
-    console.warn('RegistroEmocional pre-save normalization warning:', err && err.message ? err.message : err);
+    console.warn('Registro Emocional, errores de formatos: ', err && err.message ? err.message : err);
   }
 });
 
