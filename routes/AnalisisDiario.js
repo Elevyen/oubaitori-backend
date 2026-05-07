@@ -184,7 +184,7 @@ router.post('/', authMiddleware, async (req, res) => {
     // Si se solicita persistir, crear o actualizar documento Analisis (upsert)
     if (persist === true) {
       try {
-        const fechaClave = (registrosAAnalizar[0] && (registrosAAnalizar[0].fecha || registrosAAnalizar[0].date)) || new Date().toLocaleDateString('sv-SE');
+        const fechaClave = (registrosAAnalizar[0] && (registrosAAnalizar[0].fecha || registrosAAnalizar[0].date)) || new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Madrid' });
         const registrosProcesados = (registrosAAnalizar.map(r => r._id || r.id).filter(Boolean));
         const resumenAnalisis = analysisResult.summary || {};
         const meta = { analyzerVersion: (analysisResult?.perRecord?.[0]?.analysis?.version || null) };
@@ -249,7 +249,7 @@ router.post('/', authMiddleware, async (req, res) => {
         console.error('AnalisisDiario persist error (upsert):', err && err.stack ? err.stack : err);
         if (isDuplicateKeyError(err)) {
           try {
-            const fechaClave = (registrosAAnalizar[0] && (registrosAAnalizar[0].fecha || registrosAAnalizar[0].date)) || new Date().toLocaleDateString('sv-SE');
+            const fechaClave = (registrosAAnalizar[0] && (registrosAAnalizar[0].fecha || registrosAAnalizar[0].date)) || new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Madrid' });
             const existing = await AnalisisModel.findOne({ usuarioId: userIdResolved, fechaClave, tipo: 'diario' }).lean().exec();
             if (existing) {
               // si perRecord falta o está incompleto, reconstruir desde registrosProcesados

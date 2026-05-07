@@ -60,7 +60,7 @@ function formatRegistro(doc, opts = {}) {
   const registroId = obj && obj.id !== undefined ? String(obj.id) : (_id || undefined);
 
   // Determinar userId a partir del documento; si el caller pasó reqUser, priorizarlo
-  const userIdFromDoc = obj && obj.userId !== undefined ? String(obj.userId) : undefined;
+  const userIdFromDoc = obj && obj.userId !== undefined ? String(obj.userId) : (obj && obj.usuarioId !== undefined ? String(obj.usuarioId) : undefined);
   const reqUser = opts.reqUser || null;
   const userIdForClient = reqUser && (reqUser.id || reqUser._id) ? String(reqUser.id || reqUser._id) : userIdFromDoc;
 
@@ -80,9 +80,65 @@ function formatRegistro(doc, opts = {}) {
   };
 }
 
+// helpers de fecha usando zona Europe/Madrid (España)
+
+// Convierte "DD-MM-YYYY" a "YYYY-MM-DD" (ISO date string)
+function ddmmyyyyToISO(fechaStr) {
+  if (!fechaStr || typeof fechaStr !== 'string') return null;
+  const m = fechaStr.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+  if (!m) return null;
+  const dd = m[1], mm = m[2], yyyy = m[3];
+  return `${yyyy}-${mm}-${dd}`; // "YYYY-MM-DD"
+}
+
+// Devuelve la fecha actual en España en formato ISO "YYYY-MM-DD"
+function getSpainTodayISO() {
+  try {
+    const iso = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Madrid' }); // "YYYY-MM-DD"
+    return String(iso);
+  } catch (e) {
+    const d = new Date();
+    const yyyy = d.getUTCFullYear();
+    const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(d.getUTCDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  }
+}
+
+// Convierte "YYYY-MM-DD" a Date (UTC midnight)
+function isoToDateUTC(isoStr) {
+  if (!isoStr || typeof isoStr !== 'string') return null;
+  const d = new Date(isoStr);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+// devuelve true si fechaStr está dentro de los últimos 6 días + hoy (7 días en total) según hora de España
+function isWithinLast7Days(fechaStr) {
+  const isoTarget = ddmmyyyyToISO(fechaStr);
+  if (!isoTarget) return false;
+
+  const todayISO = getSpainTodayISO(); // "YYYY-MM-DD"
+  const dateToday = isoToDateUTC(todayISO);
+  const dateTarget = isoToDateUTC(isoTarget);
+  if (!dateToday || !dateTarget) return false;
+
+  const diffMs = dateToday.getTime() - dateTarget.getTime();
+  const diffDays = Math.floor(diffMs / (24 * 60 * 60 * 1000));
+  return diffDays >= 0 && diffDays <= 6;
+}
+
+// devuelve true si fechaStr es exactamente hoy en España
+function isTodayDDMMYYYY(fechaStr) {
+  const isoTarget = ddmmyyyyToISO(fechaStr);
+  if (!isoTarget) return false;
+  const todayISO = getSpainTodayISO();
+  return isoTarget === todayISO;
+}
+
+// devuelve hoy en formato DD-MM-YYYY según hora de España
 function todayDDMMYYYY() {
-  const iso = new Date().toLocaleDateString('sv-SE'); // "YYYY-MM-DD"
-  const [yyyy, mm, dd] = String(iso).split('-');
+  const todayISO = getSpainTodayISO(); // "YYYY-MM-DD"
+  const [yyyy, mm, dd] = String(todayISO).split('-');
   return `${dd}-${mm}-${yyyy}`;
 }
 
@@ -118,8 +174,8 @@ function toObjectIdIfValid(value) {
 }
 
 /* GET /api/registros?month=YYYY-MM
-*   Devuelve registros del usuario autenticado para el mes indicado.
-*   Nota: el modelo guarda fecha en DD-MM-YYYY,  convertimos con regex ^\\d{2}-MM-YYYY
+   Devuelve registros del usuario autenticado para el mes indicado.
+   Nota: el modelo guarda fecha en DD-MM-YYYY,  convertimos con regex ^\\d{2}-MM-YYYY
 */
 router.get('/', authMiddleware, async (req, res, next) => {
   try {
@@ -194,7 +250,60 @@ router.get('/', authMiddleware, async (req, res, next) => {
     return res.status(500).json({ ok: false, error: 'Error servidor', message: err.message });
   }
 });
+// GET /api/registros/fecha/:fecha  -> devuelve registro del usuario para esa fecha (DD-MM-YYYY)
+router.get('/fecha/:fecha', authMiddleware, async (req, res) => {
+  try {
+    const fecha = String(req.params.fecha || '').trim();
+    if (!/^\d{2}-\d{2}-\d{4}$/.test(fecha)) {
+      return res.status(400).json({ ok: false, error: 'fecha_invalida' });
+    }
 
+    const usuarioRaw = resolveUserId(req.usuario);
+    if (!usuarioRaw) return res.status(401).json({ ok: false, error: 'no_autorizado' });
+
+    const userIdObj = toObjectIdIfValid(usuarioRaw);
+    const filterBase = { fecha };
+    if (userIdObj) filterBase.userId = userIdObj;
+    else filterBase.userId = String(usuarioRaw);
+
+    const found = await RegistroEmocional.findOne({
+      $or: [
+        filterBase,
+        Object.assign({}, filterBase, { usuarioId: String(usuarioRaw) })
+      ]
+    }).lean().exec();
+
+    if (!found) return res.status(404).json({ ok: false, message: 'No encontrado' });
+
+    // desencriptar nota solo si owner
+    const resolvedUserId = resolveUserId(req.usuario);
+    const authId = resolvedUserId ? String(resolvedUserId) : null;
+    const usuariosCandidatos = [found.userId, found.usuarioId, found.user, found.usuario].filter(Boolean).map(v => String(v));
+    const isOwner = authId && usuariosCandidatos.length > 0 && usuariosCandidatos.includes(authId);
+
+    if (isOwner) {
+      if (!Object.prototype.hasOwnProperty.call(found, 'notaEncrypted')) found.notaEncrypted = null;
+      try {
+        const maybePromise = decryptNota(found.notaEncrypted);
+        found.nota = (maybePromise && typeof maybePromise.then === 'function') ? await maybePromise : maybePromise;
+      } catch (e) {
+        found.nota = null;
+      }
+      delete found.notaEncrypted;
+    } else {
+      delete found.nota;
+      delete found.notaEncrypted;
+    }
+
+    const responseRegistro = formatRegistro(found, { reqUser: req.usuario });
+    responseRegistro.isToday = isTodayDDMMYYYY(found.fecha);
+
+    return res.json({ ok: true, registro: responseRegistro });
+  } catch (err) {
+    console.error('GET /api/registros/fecha/:fecha error:', err && err.stack ? err.stack : err);
+    return res.status(500).json({ ok: false, message: 'Error servidor', detail: String(err) });
+  }
+});
 // GET /api/registros/:id
 router.get('/:id', authMiddleware, async (req, res) => {
   try {
@@ -282,12 +391,17 @@ router.post('/', authMiddleware, async (req, res, next) => {
     // validaciones fecha en DD-MM-YYYY (modelo)
     let fechaInput = payload.fecha;
     if (fechaInput instanceof Date) {
-      const iso = fechaInput.toLocaleDateString('sv-SE'); // YYYY-MM-DD
+      const iso = fechaInput.toLocaleDateString('sv-SE', { timeZone: 'Europe/Madrid' }); // YYYY-MM-DD
       const [yyyy, mm, dd] = String(iso).split('-');
       fechaInput = `${dd}-${mm}-${yyyy}`;
     }
     if (!fechaInput || !/^\d{2}-\d{2}-\d{4}$/.test(String(fechaInput))) {
       return res.status(400).json({ ok: false, error: 'falta_fecha', message: 'Campo fecha requerido (DD-MM-YYYY).' });
+    }
+
+    // validar que la fecha esté dentro de los 7 días permitidos
+    if (!isWithinLast7Days(fechaInput)) {
+      return res.status(400).json({ ok: false, error: 'fecha_fuera_rango', message: 'Solo se permiten registros del día actual y los 6 días anteriores.' });
     }
 
     const intensidad = Number(payload.intensidad ?? payload.intensity ?? 0);
@@ -340,6 +454,39 @@ router.post('/', authMiddleware, async (req, res, next) => {
 
     if (typeof registroId !== 'undefined' && registroId !== null && String(registroId).trim() !== '') {
       safePayload.id = String(registroId);
+    }
+
+    // compatibilidad con índices antiguos que usen usuarioId
+    try {
+      safePayload.usuarioId = (userIdForSave && userIdForSave.toString) ? String(userIdForSave) : userIdForSave;
+    } catch (e) {
+      safePayload.usuarioId = userIdForSave;
+    }
+
+    // --- comprobar si ya existe registro para este user+fecha ---
+    const existing = await RegistroEmocional.findOne({
+      $or: [
+        { userId: userIdForSave },
+        { usuarioId: String(userIdForSave) },
+        { userId: String(userIdForSave) }
+      ],
+      fecha: fechaInput
+    }).lean().exec();
+
+    if (existing) {
+      const existingFecha = existing.fecha || fechaInput;
+      const isExistingToday = isTodayDDMMYYYY(existingFecha);
+
+      return res.status(409).json({
+        ok: false,
+        error: 'Límite día',
+        message: 'Ya existe un registro para ese día.',
+        detalle: {
+          id: existing.id || String(existing._id),
+          fecha: existingFecha,
+          isToday: !!isExistingToday
+        }
+      });
     }
 
     const doc = new RegistroEmocional(safePayload);
@@ -423,6 +570,11 @@ router.put('/:id', authMiddleware, async (req, res) => {
       return res.status(403).json({ ok: false, message: 'Error 403' });
     }
 
+    // Solo permitir editar si el registro corresponde al día actual
+    if (!isTodayDDMMYYYY(found.fecha)) {
+      return res.status(403).json({ ok: false, message: 'Solo se puede editar el registro del día actual.' });
+    }
+
     // Construir objeto de actualización con campos permitidos
     const allowed = ['fecha', 'hora', 'emociones', 'intensidad', 'nota', 'etiquetas', 'version', 'notaEncrypted'];
     const updates = {};
@@ -499,7 +651,7 @@ router.post("/sincronizar", authMiddleware, async (req, res) => {
         const fechaRaw = typeof normalizeFecha === 'function' ? normalizeFecha(it.fecha) : it.fecha;
         let fecha = fechaRaw;
         if (fecha instanceof Date) {
-          const iso = fecha.toLocaleDateString('sv-SE'); // "YYYY-MM-DD"
+          const iso = fecha.toLocaleDateString('sv-SE', { timeZone: 'Europe/Madrid' }); // "YYYY-MM-DD"
           const [yyyy, mm, dd] = String(iso).split('-');
           fecha = `${dd}-${mm}-${yyyy}`;
         }

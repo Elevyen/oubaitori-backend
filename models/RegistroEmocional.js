@@ -10,7 +10,7 @@ const EmocionSchema = new mongoose.Schema({
 }, { _id: false });
 
 const RegistroEmocionalSchema = new mongoose.Schema({
-  id: { type: String, required: false, index: true },
+  id: { type: String, required: false},
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'Usuario', index: true, required: true },
 
   // fecha en formato DD-MM-YYYY
