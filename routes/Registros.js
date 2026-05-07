@@ -184,7 +184,8 @@ router.get('/', authMiddleware, async (req, res, next) => {
       console.warn('Warning while decrypting notas for list:', e && e.message ? e.message : e);
     }
 
-    return res.json({ ok: true, registros: docs.map(d => formatRegistro(d)) });
+    return res.json({ ok: true, registros: docs.map(d => formatRegistro(d, { reqUser: req.usuario })) });
+
   } catch (err) {
     console.error('GET /api/registros error:', err && err.stack ? err.stack : err);
     return res.status(500).json({ ok: false, error: 'Error servidor', message: err.message });
@@ -253,7 +254,7 @@ router.get('/:id', authMiddleware, async (req, res) => {
       delete found.notaEncrypted;
     }
 
-    return res.status(200).json({ ok: true, registro: found });
+    return res.status(200).json({ ok: true, registro: formatRegistro(found, { reqUser: req.usuario }) });
   } catch (err) {
     console.error('GET /api/registros/:id error:', err && err.stack ? err.stack : err);
     return res.status(500).json({ ok: false, message: 'Error servidor', detail: err.message || String(err) });
@@ -318,8 +319,15 @@ router.post('/', authMiddleware, async (req, res, next) => {
       console.error('POST /api/registros - encryptNota error:', e && e.message ? e.message : e);
       return res.status(500).json({ ok: false, error: 'encryption_error', message: 'Error en encriptación de la nota', detalle: String(e) });
     }
+    // Normalizar payload y extraer registroId
+    const payload = req.body || {};
+    const idFromBody = payload.id ?? payload._id ?? null;
+    const idFromParams = req.params && req.params.id ? String(req.params.id).trim() : null;
+    const registroId = idFromBody || idFromParams || undefined;
 
     const safePayload = {
+      // Si registroId es undefined, Mongo generará _id al crear el documento
+      // Si viene definido, lo usamos
       id: registroId,
       userId: userIdForSave,
       fecha: fechaInput,
@@ -329,14 +337,14 @@ router.post('/', authMiddleware, async (req, res, next) => {
       etiquetas: Array.isArray(payload.etiquetas) ? payload.etiquetas : (Array.isArray(payload.tags) ? payload.tags : []),
       notaEncrypted: notaEncrypted ?? null,
       version: payload.version || 1
-    };
-
+    }
     const doc = new RegistroEmocional(safePayload);
     try {
       await doc.save();
       const out = doc.toObject ? doc.toObject() : doc;
       if (out._id) out.id = String(out._id);
-      return res.status(201).json({ ok: true, registro: formatRegistro(out) });
+      return res.status(201).json({ ok: true, registro: formatRegistro(out, { reqUser: req.usuario }) });
+
     } catch (errSave) {
       console.error('POST /api/registros - save error:', errSave && errSave.stack ? errSave.stack : errSave);
 
@@ -379,10 +387,17 @@ router.put('/:id', authMiddleware, async (req, res) => {
 
     // construir filtros para localizar el documento por id
     const filters = [];
-    if (mongoose.isValidObjectId(rawId)) filters.push({ _id: rawId });
+    if (mongoose.isValidObjectId(rawId)) {
+      try {
+        filters.push({ _id: new mongoose.Types.ObjectId(rawId) });
+      } catch (e) {
+        console.warn('No se pudo convertir rawId a ObjectId, usando filtros por string:', rawId, e && e.message ? e.message : e);
+      }
+    }
     filters.push({ id: rawId });
     filters.push({ uuid: rawId });
     filters.push({ externalId: rawId });
+
 
     // buscar el documento primero (sin modificar)
     const found = await RegistroEmocional.findOne({ $or: filters }).lean().exec();
