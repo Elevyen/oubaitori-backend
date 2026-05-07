@@ -10,7 +10,7 @@ const EmocionSchema = new mongoose.Schema({
 }, { _id: false });
 
 const RegistroEmocionalSchema = new mongoose.Schema({
-  id: { type: String, required: true },
+  id: { type: String, required: false, index: true },
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'Usuario', index: true, required: true },
 
   // fecha en formato DD-MM-YYYY
@@ -34,17 +34,17 @@ const RegistroEmocionalSchema = new mongoose.Schema({
   collection: 'registros_emocionales',
   timestamps: { createdAt: 'createdAt', updatedAt: 'updatedAt' }
 });
-/*
- * Índice por userId y fecha para consultas por usuario/fecha
- */
+
 RegistroEmocionalSchema.index({ userId: 1, fecha: 1 }, { background: true });
 RegistroEmocionalSchema.index({ id: 1 }, { background: true });
-/**
- * Normalizaciones antes de guardar
- * - Verificación de formato DD-MM-YYYY para fecha
+
+/*
+ * Normalizaciones (etiquetas, emociones, fecha)
+ * Asegura que id exista (copiar desde _id si falta)
  */
-RegistroEmocionalSchema.pre('save', function () {
+RegistroEmocionalSchema.pre('save', function (next) {
   try {
+    // Normaliza etiquetas
     if (Array.isArray(this.etiquetas)) {
       this.etiquetas = Array.from(
         new Set(
@@ -53,13 +53,15 @@ RegistroEmocionalSchema.pre('save', function () {
             .filter(Boolean)
         )
       );
+    } else {
+      this.etiquetas = [];
     }
-    // Asegurar que emociones es array y filtrar solo campos permitidos
-    if (!Array.isArray(this.emociones)) this.emociones = [];
 
+    // Asegura que emociones es array y normaliza elementos
+    if (!Array.isArray(this.emociones)) this.emociones = [];
     const allowedKeys = ['id', 'label', 'emoji', 'color', 'textColor', 'tipo'];
     this.emociones = this.emociones
-      .filter(e => e && (typeof e.id === 'string' || typeof e.label === 'string'))
+      .filter(e => e && (e.id || e.label))
       .map(e => {
         const out = {};
         for (const k of allowedKeys) {
@@ -67,17 +69,14 @@ RegistroEmocionalSchema.pre('save', function () {
             out[k] = e[k];
           }
         }
-        // asegurar id y label como strings
         if (out.id && typeof out.id !== 'string') out.id = String(out.id);
         if (!out.id && out.label) out.id = String(out.label).toLowerCase().replace(/\s+/g, '_');
         if (!out.label && out.id) out.label = String(out.id);
-        // tipo por defecto si falta
         if (!out.tipo) out.tipo = 'neutra';
         return out;
       });
-    // Asegurar id principal como string
-    if (this.id && typeof this.id !== 'string') this.id = String(this.id);
-    // Si fecha viene como Date, convertir a DD-MM-YYYY; si viene como string, dejamos que la validación del schema verifique el formato
+
+    // Si fecha viene como Date, convertir a DD-MM-YYYY
     if (this.fecha && this.fecha instanceof Date) {
       const d = this.fecha;
       const dd = String(d.getDate()).padStart(2, '0');
@@ -85,9 +84,16 @@ RegistroEmocionalSchema.pre('save', function () {
       const yyyy = d.getFullYear();
       this.fecha = `${dd}-${mm}-${yyyy}`;
     }
+
+    // Asegurar id principal como string; si no existe, usar _id
+    if (this.id && typeof this.id !== 'string') this.id = String(this.id);
+    if ((!this.id || String(this.id).trim() === '') && this._id) {
+      this.id = String(this._id);
+    }
   } catch (err) {
-    console.warn('Registro Emocional, errores de formatos: ', err && err.message ? err.message : err);
+    console.warn('Registro Emocional pre-save normalization error:', err && err.message ? err.message : err);
   }
+  next();
 });
 
 module.exports = mongoose.model('RegistroEmocional', RegistroEmocionalSchema);
