@@ -73,7 +73,7 @@ function formatRegistro(doc, opts = {}) {
     emociones: emociones,
     intensidad: obj.intensidad,
     etiquetas: obj.etiquetas || [],
-    notaEncrypted: obj.notaEncrypted || null,
+    nota: obj.nota !== undefined ? obj.nota : null,
     createdAt: obj.createdAt,
     updatedAt: obj.updatedAt,
     version: obj.version
@@ -464,6 +464,7 @@ router.post('/', authMiddleware, async (req, res, next) => {
     }
 
     // --- comprobar si ya existe registro para este user+fecha ---
+    // --- comprobar si ya existe registro para este user+fecha ---
     const existing = await RegistroEmocional.findOne({
       $or: [
         { userId: userIdForSave },
@@ -472,6 +473,53 @@ router.post('/', authMiddleware, async (req, res, next) => {
       ],
       fecha: fechaInput
     }).lean().exec();
+
+    if (existing) {
+      const existingFecha = existing.fecha || fechaInput;
+      const isExistingToday = isTodayDDMMYYYY(existingFecha);
+
+      if (isExistingToday) {
+        const updateFields = {
+          hora: safePayload.hora,
+          emociones: safePayload.emociones,
+          intensidad: safePayload.intensidad,
+          etiquetas: safePayload.etiquetas,
+          notaEncrypted: safePayload.notaEncrypted,
+          version: safePayload.version,
+          updatedAt: new Date()
+        };
+
+        const updated = await RegistroEmocional.findOneAndUpdate(
+          { _id: existing._id },
+          { $set: updateFields },
+          { returnDocument: 'after', new: true, lean: true }
+        ).exec();
+
+        if (updated && updated.notaEncrypted) {
+          try {
+            const maybe = decryptNota(updated.notaEncrypted);
+            updated.nota = (maybe && typeof maybe.then === 'function') ? await maybe : maybe;
+          } catch (e) {
+            updated.nota = null;
+          }
+        }
+
+        return res.status(200).json({ ok: true, registro: formatRegistro(updated, { reqUser: req.usuario }) });
+      }
+
+      // Si existe y no es hoy, devolvemos 409 con info (no editable)
+      return res.status(409).json({
+        ok: false,
+        error: 'Límite día',
+        message: 'Ya existe un registro para ese día.',
+        detalle: {
+          id: existing.id || String(existing._id),
+          fecha: existingFecha,
+          isToday: !!isExistingToday
+        }
+      });
+    }
+
 
     if (existing) {
       const existingFecha = existing.fecha || fechaInput;
@@ -550,7 +598,6 @@ router.put('/:id', authMiddleware, async (req, res) => {
     filters.push({ externalId: rawId });
 
 
-    // buscar el documento primero (sin modificar)
     const found = await RegistroEmocional.findOne({ $or: filters }).lean().exec();
     if (!found) return res.status(404).json({ ok: false, message: 'No se encontró' });
 
@@ -661,7 +708,7 @@ router.post("/sincronizar", authMiddleware, async (req, res) => {
         }
 
         const horaVal = it.hora ? new Date(it.hora) : new Date();
-        const emociones = Array.isArray(it.emociones) ? it.emociones.map(normalizeEmocion).filter(Boolean) : [];
+        const emociones = Array.isArray(it.emociones) ? it.emociones.map(normalizeEmocion).filter(e => e && e.id && e.label): [];
         const intensidad = typeof it.intensidad !== 'undefined' ? it.intensidad : null;
         const etiquetas = Array.isArray(it.etiquetas) ? it.etiquetas : [];
 
