@@ -326,8 +326,7 @@ router.post('/', authMiddleware, async (req, res, next) => {
     const registroId = idFromBody || idFromParams || undefined;
 
     const safePayload = {
-      // Si registroId es undefined, Mongo generará _id al crear el documento
-      // Si viene definido, lo usamos
+      // Si registroId es undefined, Mongo generará _id al crear el documento.
       id: registroId,
       userId: userIdForSave,
       fecha: fechaInput,
@@ -337,7 +336,7 @@ router.post('/', authMiddleware, async (req, res, next) => {
       etiquetas: Array.isArray(payload.etiquetas) ? payload.etiquetas : (Array.isArray(payload.tags) ? payload.tags : []),
       notaEncrypted: notaEncrypted ?? null,
       version: payload.version || 1
-    }
+    };
     const doc = new RegistroEmocional(safePayload);
     try {
       await doc.save();
