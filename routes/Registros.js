@@ -56,14 +56,15 @@ function formatRegistro(doc) {
     : [];
 
   // Normaliza campos de id a string para evitar ObjectId en el cliente
-  const _id = obj._id !== undefined ? String(obj._id) : undefined;
-  const id = obj.id !== undefined ? String(obj.id) : (_id || undefined);
-  const userId = obj.userId !== undefined ? String(obj.userId) : undefined;
+  const _id = obj && obj._id !== undefined ? String(obj._id) : undefined;
+  const registroId = obj && obj.id !== undefined ? String(obj.id) : (_id || undefined);
+  const userIdFromBody = obj && obj.userId !== undefined ? String(obj.userId) : undefined;
+  const userIdForSave = req.user?.id ? String(req.user.id) : userIdFromBody;
 
   return {
     _id: _id,
-    id: id,
-    userId: userId,
+    id: registroId,
+    userId: userIdForSave,
     fecha: obj.fecha,
     hora: obj.hora,
     emociones: emociones,
@@ -199,7 +200,7 @@ router.get('/:id', authMiddleware, async (req, res) => {
     // construir filtros
     const filters = [];
     if (mongoose.isValidObjectId(rawId)) {
-      try { filters.push({ _id: new mongoose.Types.ObjectId(rawId) }); } catch (e) {  }
+      try { filters.push({ _id: new mongoose.Types.ObjectId(rawId) }); } catch (e) { }
     }
     filters.push({ id: rawId }, { uuid: rawId }, { externalId: rawId });
 
@@ -319,7 +320,7 @@ router.post('/', authMiddleware, async (req, res, next) => {
     }
 
     const safePayload = {
-      id,
+      id: registroId,
       userId: userIdForSave,
       fecha: fechaInput,
       hora: payload.hora ? new Date(payload.hora) : new Date(),
@@ -474,64 +475,64 @@ router.post("/sincronizar", authMiddleware, async (req, res) => {
     }
 
     for (const it of items) {
-  try {
-    // valida fecha: aceptar Date, luego valida DD-MM-YYYY
-    const fechaRaw = typeof normalizeFecha === 'function' ? normalizeFecha(it.fecha) : it.fecha;
-    let fecha = fechaRaw;
-    if (fecha instanceof Date) {
-      const iso = fecha.toLocaleDateString('sv-SE'); // "YYYY-MM-DD"
-      const [yyyy, mm, dd] = String(iso).split('-');
-      fecha = `${dd}-${mm}-${yyyy}`;
-    }
-    if (!fecha || !/^\d{2}-\d{2}-\d{4}$/.test(String(fecha))) {
-      results.rechazados.push({ item: it, reason: "fecha_invalida" });
-      continue;
-    }
+      try {
+        // valida fecha: aceptar Date, luego valida DD-MM-YYYY
+        const fechaRaw = typeof normalizeFecha === 'function' ? normalizeFecha(it.fecha) : it.fecha;
+        let fecha = fechaRaw;
+        if (fecha instanceof Date) {
+          const iso = fecha.toLocaleDateString('sv-SE'); // "YYYY-MM-DD"
+          const [yyyy, mm, dd] = String(iso).split('-');
+          fecha = `${dd}-${mm}-${yyyy}`;
+        }
+        if (!fecha || !/^\d{2}-\d{2}-\d{4}$/.test(String(fecha))) {
+          results.rechazados.push({ item: it, reason: "fecha_invalida" });
+          continue;
+        }
 
-    const horaVal = it.hora ? new Date(it.hora) : new Date();
-    const emociones = Array.isArray(it.emociones) ? it.emociones.map(normalizeEmocion).filter(Boolean) : [];
-    const intensidad = typeof it.intensidad !== 'undefined' ? it.intensidad : null;
-    const etiquetas = Array.isArray(it.etiquetas) ? it.etiquetas : [];
+        const horaVal = it.hora ? new Date(it.hora) : new Date();
+        const emociones = Array.isArray(it.emociones) ? it.emociones.map(normalizeEmocion).filter(Boolean) : [];
+        const intensidad = typeof it.intensidad !== 'undefined' ? it.intensidad : null;
+        const etiquetas = Array.isArray(it.etiquetas) ? it.etiquetas : [];
 
-    // Nota: aceptar notaEncrypted si viene; si viene nota en texto plano, encriptar aquí
-    const entradaNotaEncrypted = it.notaEncrypted || null;
-    const plainNota = extractPlainNotaLocal(it);
-    let guardarNotaEncrypted = null;
+        // Nota: aceptar notaEncrypted si viene; si viene nota en texto plano, encriptar aquí
+        const entradaNotaEncrypted = it.notaEncrypted || null;
+        const plainNota = extractPlainNotaLocal(it);
+        let guardarNotaEncrypted = null;
 
-    try {
-      if (entradaNotaEncrypted) {
-        guardarNotaEncrypted = entradaNotaEncrypted;
-      } else if (plainNota !== null && plainNota !== undefined) {
-        const maybePromise = encryptNota(String(plainNota));
-        guardarNotaEncrypted = (maybePromise && typeof maybePromise.then === 'function') ? await maybePromise : maybePromise;
-      } else {
-        guardarNotaEncrypted = null;
+        try {
+          if (entradaNotaEncrypted) {
+            guardarNotaEncrypted = entradaNotaEncrypted;
+          } else if (plainNota !== null && plainNota !== undefined) {
+            const maybePromise = encryptNota(String(plainNota));
+            guardarNotaEncrypted = (maybePromise && typeof maybePromise.then === 'function') ? await maybePromise : maybePromise;
+          } else {
+            guardarNotaEncrypted = null;
+          }
+        } catch (encErr) {
+          console.error('Error encriptando nota al sincronizar:', encErr && encErr.message ? encErr.message : encErr);
+          results.rechazados.push({ item: it, reason: "encryption_error", detail: String(encErr) });
+          continue;
+        }
+
+        // Upsert por userId+fecha: busca por userId y fecha; si existe actualiza, si no crea
+        const filter = { userId: usuarioIdForFilter, fecha };
+        const update = {
+          $set: {
+            hora: horaVal,
+            emociones,
+            intensidad,
+            etiquetas,
+            notaEncrypted: guardarNotaEncrypted
+          }
+        };
+
+        const updated = await RegistroEmocional.findOneAndUpdate(filter, update, { upsert: true, new: true, setDefaultsOnInsert: true });
+        results.actualizados.push({ fecha, id: updated._id });
+      } catch (e) {
+        console.error('Error procesando item en sincronizar:', e && e.stack ? e.stack : e);
+        results.rechazados.push({ item: it, reason: String(e) });
       }
-    } catch (encErr) {
-      console.error('Error encriptando nota al sincronizar:', encErr && encErr.message ? encErr.message : encErr);
-      results.rechazados.push({ item: it, reason: "encryption_error", detail: String(encErr) });
-      continue;
     }
-
-    // Upsert por userId+fecha: busca por userId y fecha; si existe actualiza, si no crea
-    const filter = { userId: usuarioIdForFilter, fecha };
-    const update = {
-      $set: {
-        hora: horaVal,
-        emociones,
-        intensidad,
-        etiquetas,
-        notaEncrypted: guardarNotaEncrypted
-      }
-    };
-
-    const updated = await RegistroEmocional.findOneAndUpdate(filter, update, { upsert: true, new: true, setDefaultsOnInsert: true });
-    results.actualizados.push({ fecha, id: updated._id });
-  } catch (e) {
-    console.error('Error procesando item en sincronizar:', e && e.stack ? e.stack : e);
-    results.rechazados.push({ item: it, reason: String(e) });
-  }
-}
 
     return res.json({ ok: true, ...results });
   } catch (err) {
