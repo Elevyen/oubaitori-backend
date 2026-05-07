@@ -35,7 +35,7 @@ function extractPlainNota(payload) {
 }
 
 // normaliza salida del documento para la API
-function formatRegistro(doc) {
+function formatRegistro(doc, opts = {}) {
   if (!doc) return null;
 
   const obj = (doc && typeof doc.toObject === 'function') ? doc.toObject() : doc;
@@ -58,13 +58,16 @@ function formatRegistro(doc) {
   // Normaliza campos de id a string para evitar ObjectId en el cliente
   const _id = obj && obj._id !== undefined ? String(obj._id) : undefined;
   const registroId = obj && obj.id !== undefined ? String(obj.id) : (_id || undefined);
-  const userIdFromBody = obj && obj.userId !== undefined ? String(obj.userId) : undefined;
-  const userIdForSave = req.user?.id ? String(req.user.id) : userIdFromBody;
+
+  // Determinar userId a partir del documento; si el caller pasó reqUser, priorizarlo
+  const userIdFromDoc = obj && obj.userId !== undefined ? String(obj.userId) : undefined;
+  const reqUser = opts.reqUser || null;
+  const userIdForClient = reqUser && (reqUser.id || reqUser._id) ? String(reqUser.id || reqUser._id) : userIdFromDoc;
 
   return {
     _id: _id,
     id: registroId,
-    userId: userIdForSave,
+    userId: userIdForClient,
     fecha: obj.fecha,
     hora: obj.hora,
     emociones: emociones,
@@ -115,8 +118,8 @@ function toObjectIdIfValid(value) {
 }
 
 /* GET /api/registros?month=YYYY-MM
-   Devuelve registros del usuario autenticado para el mes indicado.
-   Nota: el modelo guarda fecha en DD-MM-YYYY,  convertimos con regex ^\\d{2}-MM-YYYY
+*   Devuelve registros del usuario autenticado para el mes indicado.
+*   Nota: el modelo guarda fecha en DD-MM-YYYY,  convertimos con regex ^\\d{2}-MM-YYYY
 */
 router.get('/', authMiddleware, async (req, res, next) => {
   try {
