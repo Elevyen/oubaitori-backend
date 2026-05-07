@@ -39,8 +39,8 @@ RegistroEmocionalSchema.index({ userId: 1, fecha: 1 }, { background: true });
 RegistroEmocionalSchema.index({ id: 1 }, { background: true });
 
 /*
- * Normalizaciones (etiquetas, emociones, fecha)
- * Asegura que id exista (copiar desde _id si falta)
+ * Pre-save hook:
+ * - Asegurar que id exista (copiar desde _id si falta)
  */
 RegistroEmocionalSchema.pre('save', function (next) {
   try {
@@ -85,7 +85,7 @@ RegistroEmocionalSchema.pre('save', function (next) {
       this.fecha = `${dd}-${mm}-${yyyy}`;
     }
 
-    // Asegurar id principal como string; si no existe, usar _id
+    // Asegurar id principal como string; si no existe, usar _id (si ya generado)
     if (this.id && typeof this.id !== 'string') this.id = String(this.id);
     if ((!this.id || String(this.id).trim() === '') && this._id) {
       this.id = String(this._id);
@@ -93,7 +93,10 @@ RegistroEmocionalSchema.pre('save', function (next) {
   } catch (err) {
     console.warn('Registro Emocional pre-save normalization error:', err && err.message ? err.message : err);
   }
-  next();
+
+
+  if (typeof next === 'function') return next();
+  return;
 });
 
 module.exports = mongoose.model('RegistroEmocional', RegistroEmocionalSchema);
