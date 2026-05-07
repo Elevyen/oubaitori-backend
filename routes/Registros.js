@@ -320,7 +320,6 @@ router.post('/', authMiddleware, async (req, res, next) => {
       return res.status(500).json({ ok: false, error: 'encryption_error', message: 'Error en encriptación de la nota', detalle: String(e) });
     }
     // Normalizar payload y extraer registroId
-    const payload = req.body || {};
     const idFromBody = payload.id ?? payload._id ?? null;
     const idFromParams = req.params && req.params.id ? String(req.params.id).trim() : null;
     const registroId = idFromBody || idFromParams || undefined;
