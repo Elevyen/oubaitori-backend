@@ -78,7 +78,7 @@ RegistroEmocionalSchema.index(
   { unique: true, background: true }
 );
 
-RegistroEmocionalSchema.pre('save', function (next) {
+RegistroEmocionalSchema.pre('save', function () {
 
   try {
 
@@ -163,7 +163,6 @@ RegistroEmocionalSchema.pre('save', function (next) {
     );
   }
 
-  next();
 });
 
 module.exports = mongoose.model(
