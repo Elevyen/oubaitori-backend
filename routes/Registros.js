@@ -3,7 +3,6 @@ const router = express.Router();
 const mongoose = require('mongoose');
 const RegistroEmocional = require('../models/RegistroEmocional');
 const authMiddleware = require('../middleware/auth');
-const crypto = require('crypto');
 const { encrypt: encryptNota, decrypt: decryptNota } = require('../utils/encriptarNotas');
 
 const MAX_REGISTROS_POR_DIA = 1;
@@ -43,12 +42,13 @@ function normalizeEmocion(e) {
 }
 
 function extractPlainNota(payload) {
-  if (!payload || typeof payload !== 'object') return null;
-  const candidates = [payload.nota, payload.note, payload.noteText, payload.text];
-  for (const c of candidates) {
-    if (c !== undefined && c !== null) return c;
+  if (!payload || typeof payload !== 'object') {
+    return null;
   }
-  return null;
+  if (payload.nota === undefined || payload.nota === null) {
+    return null;
+  }
+  return payload.nota;
 }
 
 // normaliza salida del documento para la API
@@ -445,7 +445,7 @@ router.post('/', authMiddleware, async (req, res, next) => {
       return res.status(400).json({ ok: false, error: 'Solo se permiten los últimos 7 días', message: 'Solo se permiten registros del día actual y los 6 días anteriores.' });
     }
 
-    const intensidad = Number(payload.intensidad ?? payload.intensity ?? 0);
+    const intensidad = Number(payload.intensidad ?? 0);
     if (isNaN(intensidad) || intensidad < 0 || intensidad > 10) {
       return res.status(400).json({ ok: false, error: 'Intensidad incorrecta' });
     }
@@ -455,7 +455,7 @@ router.post('/', authMiddleware, async (req, res, next) => {
     }
 
     // normaliza emociones
-    const emocionesRaw = Array.isArray(payload.emociones) ? payload.emociones : (Array.isArray(payload.emotions) ? payload.emotions : []);
+    const emocionesRaw = Array.isArray(payload.emociones) ? payload.emociones : [];
     const emociones = emocionesRaw
       .map(normalizeEmocion)
       .filter(Boolean);
@@ -492,7 +492,7 @@ router.post('/', authMiddleware, async (req, res, next) => {
       hora: payload.hora ? new Date(payload.hora) : new Date(),
       emociones,
       intensidad,
-      etiquetas: Array.isArray(payload.etiquetas) ? payload.etiquetas : (Array.isArray(payload.tags) ? payload.tags : []),
+      etiquetas: Array.isArray(payload.etiquetas)  ? payload.etiquetas  : [],
       notaEncrypted: notaEncrypted ?? null,
       version: payload.version || 1
     };
@@ -553,23 +553,6 @@ router.post('/', authMiddleware, async (req, res, next) => {
       }
 
       // Si existe y no es hoy, devolvemos 409 con info (no editable)
-      return res.status(409).json({
-        ok: false,
-        error: 'Límite día',
-        message: 'Ya existe un registro para ese día.',
-        detalle: {
-          id: existing.id || String(existing._id),
-          fecha: existingFecha,
-          isToday: !!isExistingToday
-        }
-      });
-    }
-
-
-    if (existing) {
-      const existingFecha = existing.fecha || fechaInput;
-      const isExistingToday = isTodayDDMMYYYY(existingFecha);
-
       return res.status(409).json({
         ok: false,
         error: 'Límite día',
@@ -661,11 +644,7 @@ router.put('/:id', authMiddleware, async (req, res) => {
     if (authId && usuariosCandidatos.length > 0 && !usuariosCandidatos.includes(authId)) {
       return res.status(403).json({ ok: false, message: 'Error 403' });
     }
-    console.log({
-      foundFecha: found.fecha,
-      today: todayDDMMYYYY(),
-      serverNow: new Date().toISOString()
-    });
+
     // Solo permitir editar si el registro corresponde al día actual
     if (!isTodayDDMMYYYY(found.fecha)) {
       return res.status(403).json({ ok: false, message: 'Solo se puede editar el registro del día actual.' });
@@ -674,19 +653,24 @@ router.put('/:id', authMiddleware, async (req, res) => {
     // Construir objeto de actualización con campos permitidos
     const allowed = ['fecha', 'hora', 'emociones', 'intensidad', 'nota', 'etiquetas', 'version'];
     const updates = {};
-    for (const k of allowed)
-      if (updates.emociones) {
-        updates.emociones = updates.emociones
-          .map(normalizeEmocion)
-          .filter(Boolean);
-      } if (req.body[k] !== undefined) updates[k] = req.body[k];
+    for (const k of allowed) {
+      if (req.body[k] !== undefined) {
+        updates[k] = req.body[k];
+      }
+    }
+
+    if (Array.isArray(updates.emociones)) {
+      updates.emociones = updates.emociones
+        .map(normalizeEmocion)
+        .filter(Boolean);
+    }
     updates.updatedAt = new Date();
 
     // Control para nota cifrada (prioriza una ya cifrada)
     if (req.body.notaEncrypted !== undefined) {
       updates.notaEncrypted = req.body.notaEncrypted;
       updates.nota = null; // nunca guardes el texto plano
-    } else if (req.body.nota !== undefined || req.body.note !== undefined || req.body.noteText !== undefined || req.body.text !== undefined) {
+    } else if (req.body.nota !== undefined) {
       const plainNota = extractPlainNota(req.body);
       try {
         if (plainNota !== null && plainNota !== undefined && String(plainNota).length > 0) {
@@ -740,12 +724,13 @@ router.post("/sincronizar", authMiddleware, async (req, res) => {
     const results = { actualizados: [], rechazados: [] };
 
     function extractPlainNotaLocal(payload) {
-      if (!payload || typeof payload !== 'object') return null;
-      const candidates = [payload.nota, payload.note, payload.noteText, payload.text];
-      for (const c of candidates) {
-        if (c !== undefined && c !== null) return c;
+      if (!payload || typeof payload !== 'object') {
+        return null;
       }
-      return null;
+      if (payload.nota === undefined || payload.nota === null) {
+        return null;
+      }
+      return payload.nota;
     }
 
     for (const it of items) {
