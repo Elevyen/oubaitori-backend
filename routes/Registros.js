@@ -605,7 +605,6 @@ router.put('/:id', authMiddleware, async (req, res) => {
     if (!resolvedUserId) return res.status(401).json({ ok: false, message: 'No autorizado' });
 
     // construir filtros para localizar el documento por id
-    // construir filtros para localizar el documento por id
     const filters = [];
 
     if (mongoose.isValidObjectId(rawId)) {
