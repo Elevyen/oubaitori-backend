@@ -14,14 +14,31 @@ function isDuplicateKeyError(err) {
 
 function normalizeEmocion(e) {
   if (!e || typeof e !== 'object') return null;
-  const tipo = (e.tipo && ['buena', 'mala', 'neutra'].includes(e.tipo)) ? e.tipo : 'neutra';
+
+  const id =
+    e.id ??
+    e.key ??
+    e._id ??
+    null;
+
+  const label =
+    e.label ??
+    e.name ??
+    null;
+
+  if (!id || !label) {
+    return null;
+  }
+
   return {
-    id: String(e.id || e.key || e._id),
-    label: String(e.label || e.name || 'Desconocida'),
-    emoji: e.emoji || '',
-    color: e.color || '',
-    textColor: e.textColor || '',
-    tipo
+    id: String(id).trim(),
+    label: String(label).trim(),
+    emoji: e.emoji ? String(e.emoji) : '',
+    color: e.color ? String(e.color) : '',
+    textColor: e.textColor ? String(e.textColor) : '',
+    tipo: ['buena', 'mala', 'neutra'].includes(e.tipo)
+      ? e.tipo
+      : 'neutra'
   };
 }
 
@@ -182,7 +199,7 @@ router.get('/', authMiddleware, async (req, res, next) => {
     const usuario = req.usuario;
     const userIdRaw = resolveUserId(usuario); // Obtén el ID de usuario
     if (!userIdRaw)
-      return res.status(401).json({ ok: false, error: 'no_autorizado' });
+      return res.status(401).json({ ok: false, error: 'No autorizado' });
 
     const month = String(req.query.month || '').trim(); // Esperamos MM-YYYY
     const filter = {};
@@ -202,7 +219,7 @@ router.get('/', authMiddleware, async (req, res, next) => {
       // Error si el mes tiene formato inválido
       return res.status(400).json({
         ok: false,
-        error: 'formato_mes_invalido',
+        error: 'Formato mes invalido',
         message: 'El formato del mes debe ser MM-YYYY (ej: 05-2026).'
       });
     }
@@ -279,11 +296,11 @@ router.get('/fecha/:fecha', authMiddleware, async (req, res) => {
   try {
     const fecha = String(req.params.fecha || '').trim();
     if (!/^\d{2}-\d{2}-\d{4}$/.test(fecha)) {
-      return res.status(400).json({ ok: false, error: 'fecha_invalida' });
+      return res.status(400).json({ ok: false, error: 'Fecha invalida' });
     }
 
     const usuarioRaw = resolveUserId(req.usuario);
-    if (!usuarioRaw) return res.status(401).json({ ok: false, error: 'no_autorizado' });
+    if (!usuarioRaw) return res.status(401).json({ ok: false, error: 'No autorizado' });
 
     const userIdObj = toObjectIdIfValid(usuarioRaw);
     const filterBase = { fecha };
@@ -420,12 +437,12 @@ router.post('/', authMiddleware, async (req, res, next) => {
       fechaInput = `${dd}-${mm}-${yyyy}`;
     }
     if (!fechaInput || !/^\d{2}-\d{2}-\d{4}$/.test(String(fechaInput))) {
-      return res.status(400).json({ ok: false, error: 'falta_fecha', message: 'Campo fecha requerido (DD-MM-YYYY).' });
+      return res.status(400).json({ ok: false, error: 'Fecha requerida', message: 'Campo fecha requerido (DD-MM-YYYY).' });
     }
 
     // validar que la fecha esté dentro de los 7 días permitidos
     if (!isWithinLast7Days(fechaInput)) {
-      return res.status(400).json({ ok: false, error: 'fecha_fuera_rango', message: 'Solo se permiten registros del día actual y los 6 días anteriores.' });
+      return res.status(400).json({ ok: false, error: 'Solo se permiten los últimos 7 días', message: 'Solo se permiten registros del día actual y los 6 días anteriores.' });
     }
 
     const intensidad = Number(payload.intensidad ?? payload.intensity ?? 0);
@@ -441,7 +458,7 @@ router.post('/', authMiddleware, async (req, res, next) => {
     const emocionesRaw = Array.isArray(payload.emociones) ? payload.emociones : (Array.isArray(payload.emotions) ? payload.emotions : []);
     const emociones = emocionesRaw
       .map(normalizeEmocion)
-      .filter(e => e && e.id && e.label);
+      .filter(Boolean);
 
     // extrae texto de nota desde variantes (nota, note, noteText, text)
     let notaEncrypted = null;
@@ -461,7 +478,7 @@ router.post('/', authMiddleware, async (req, res, next) => {
         }
       } catch (e) {
         console.error('POST /api/registros - encryptNota error:', e && e.message ? e.message : e);
-        return res.status(500).json({ ok: false, error: 'encryption_error', message: 'Error en encriptación de la nota', detalle: String(e) });
+        return res.status(500).json({ ok: false, error: 'Error de encriptado', message: 'Error en encriptación de la nota', detalle: String(e) });
       }
     }
     // Normalizar payload y extraer registroId
@@ -596,7 +613,7 @@ router.post('/', authMiddleware, async (req, res, next) => {
     console.error('CRÍTICO POST /api/registros error completo:', err && err.stack ? err.stack : err);
     return res.status(500).json({
       ok: false,
-      error: 'error_servidor',
+      error: 'Error servidor',
       message: err.message || 'Error servidor',
       detalle: err.stack || String(err)
     });
@@ -653,7 +670,12 @@ router.put('/:id', authMiddleware, async (req, res) => {
     // Construir objeto de actualización con campos permitidos
     const allowed = ['fecha', 'hora', 'emociones', 'intensidad', 'nota', 'etiquetas', 'version'];
     const updates = {};
-    for (const k of allowed) if (req.body[k] !== undefined) updates[k] = req.body[k];
+    for (const k of allowed)
+      if (updates.emociones) {
+        updates.emociones = updates.emociones
+          .map(normalizeEmocion)
+          .filter(Boolean);
+      } if (req.body[k] !== undefined) updates[k] = req.body[k];
     updates.updatedAt = new Date();
 
     // Control para nota cifrada (prioriza una ya cifrada)
@@ -706,7 +728,7 @@ router.post("/sincronizar", authMiddleware, async (req, res) => {
     if (items.length === 0) return res.json({ ok: true, actualizados: [], rechazados: [] });
 
     const usuarioIdRaw = resolveUserId(req.usuario);
-    if (!usuarioIdRaw) return res.status(401).json({ ok: false, error: 'no_autorizado' });
+    if (!usuarioIdRaw) return res.status(401).json({ ok: false, error: 'No autorizado' });
 
     const usuarioIdObj = toObjectIdIfValid(usuarioIdRaw);
     const usuarioIdForFilter = usuarioIdObj ? usuarioIdObj : String(usuarioIdRaw);
@@ -733,12 +755,12 @@ router.post("/sincronizar", authMiddleware, async (req, res) => {
           fecha = `${dd}-${mm}-${yyyy}`;
         }
         if (!fecha || !/^\d{2}-\d{2}-\d{4}$/.test(String(fecha))) {
-          results.rechazados.push({ item: it, reason: "fecha_invalida" });
+          results.rechazados.push({ item: it, reason: "Fecha invalida" });
           continue;
         }
 
         const horaVal = it.hora ? new Date(it.hora) : new Date();
-        const emociones = Array.isArray(it.emociones) ? it.emociones.map(normalizeEmocion).filter(e => e && e.id && e.label) : [];
+        const emociones = Array.isArray(it.emociones) ? it.emociones.map(normalizeEmocion).filter(Boolean) : [];
         const intensidad = typeof it.intensidad !== 'undefined' ? it.intensidad : null;
         const etiquetas = Array.isArray(it.etiquetas) ? it.etiquetas : [];
 
