@@ -605,20 +605,24 @@ router.put('/:id', authMiddleware, async (req, res) => {
     if (!resolvedUserId) return res.status(401).json({ ok: false, message: 'No autorizado' });
 
     // construir filtros para localizar el documento por id
-    const filters = [];
-    if (mongoose.isValidObjectId(rawId)) {
-      try {
-        filters.push({ _id: new mongoose.Types.ObjectId(rawId) });
-      } catch (e) {
-        console.warn('No se pudo convertir rawId a ObjectId, usando filtros por string:', rawId, e && e.message ? e.message : e);
-      }
-    }
+    // construir filtros para localizar el documento por id
     const filters = [];
 
     if (mongoose.isValidObjectId(rawId)) {
-      filters.push({
-        _id: new mongoose.Types.ObjectId(rawId)
-      });
+      try {
+
+        filters.push({
+          _id: new mongoose.Types.ObjectId(rawId)
+        });
+
+      } catch (e) {
+
+        console.warn(
+          'No se pudo convertir rawId a ObjectId:',
+          rawId,
+          e?.message || e
+        );
+      }
     }
 
     const found = await RegistroEmocional.findOne({ $or: filters }).lean().exec();
