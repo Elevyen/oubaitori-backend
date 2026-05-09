@@ -420,21 +420,25 @@ router.post('/', authMiddleware, async (req, res, next) => {
       .filter(e => e && e.id && e.label);
 
     // extrae texto de nota desde variantes (nota, note, noteText, text)
-    const plainNota = extractPlainNota(payload);
-    const notaText = plainNota !== null ? String(plainNota) : '';
-
-    // ENCRIPTA la nota en servidor y preparar notaEncrypted (solo guardamos notaEncrypted)
     let notaEncrypted = null;
-    try {
-      if (notaText !== '') {
-        const maybePromise = encryptNota(String(notaText));
-        notaEncrypted = (maybePromise && typeof maybePromise.then === 'function') ? await maybePromise : maybePromise;
-      } else {
-        notaEncrypted = null;
+    // Prioriza el valor que llega cifrado, si está
+    if (payload.notaEncrypted) {
+      notaEncrypted = payload.notaEncrypted;
+    } else {
+      // Si el frontend no cifra, cifra en backend
+      const plainNota = extractPlainNota(payload);
+      const notaText = plainNota !== null ? String(plainNota) : '';
+      try {
+        if (notaText !== '') {
+          const maybePromise = encryptNota(String(notaText));
+          notaEncrypted = (maybePromise && typeof maybePromise.then === 'function') ? await maybePromise : maybePromise;
+        } else {
+          notaEncrypted = null;
+        }
+      } catch (e) {
+        console.error('POST /api/registros - encryptNota error:', e && e.message ? e.message : e);
+        return res.status(500).json({ ok: false, error: 'encryption_error', message: 'Error en encriptación de la nota', detalle: String(e) });
       }
-    } catch (e) {
-      console.error('POST /api/registros - encryptNota error:', e && e.message ? e.message : e);
-      return res.status(500).json({ ok: false, error: 'encryption_error', message: 'Error en encriptación de la nota', detalle: String(e) });
     }
     // Normalizar payload y extraer registroId
     const idFromBody = payload.id ?? payload._id ?? null;
@@ -623,13 +627,16 @@ router.put('/:id', authMiddleware, async (req, res) => {
     }
 
     // Construir objeto de actualización con campos permitidos
-    const allowed = ['fecha', 'hora', 'emociones', 'intensidad', 'nota', 'etiquetas', 'version', 'notaEncrypted'];
+    const allowed = ['fecha', 'hora', 'emociones', 'intensidad', 'nota', 'etiquetas', 'version'];
     const updates = {};
     for (const k of allowed) if (req.body[k] !== undefined) updates[k] = req.body[k];
     updates.updatedAt = new Date();
 
-    // Si viene nota en el body, encriptarla y guardar notaEncrypted en lugar de texto plano
-    if (req.body && (req.body.nota !== undefined || req.body.note !== undefined || req.body.noteText !== undefined || req.body.text !== undefined)) {
+    // Control para nota cifrada (prioriza una ya cifrada)
+    if (req.body.notaEncrypted !== undefined) {
+      updates.notaEncrypted = req.body.notaEncrypted;
+      updates.nota = null; // nunca guardes el texto plano
+    } else if (req.body.nota !== undefined || req.body.note !== undefined || req.body.noteText !== undefined || req.body.text !== undefined) {
       const plainNota = extractPlainNota(req.body);
       try {
         if (plainNota !== null && plainNota !== undefined && String(plainNota).length > 0) {
@@ -637,7 +644,6 @@ router.put('/:id', authMiddleware, async (req, res) => {
           updates.notaEncrypted = (maybePromise && typeof maybePromise.then === 'function') ? await maybePromise : maybePromise;
           updates.nota = null;
         } else {
-          // si cliente envía nota vacía, borrar notaEncrypted
           updates.notaEncrypted = null;
           updates.nota = null;
         }
@@ -708,7 +714,7 @@ router.post("/sincronizar", authMiddleware, async (req, res) => {
         }
 
         const horaVal = it.hora ? new Date(it.hora) : new Date();
-        const emociones = Array.isArray(it.emociones) ? it.emociones.map(normalizeEmocion).filter(e => e && e.id && e.label): [];
+        const emociones = Array.isArray(it.emociones) ? it.emociones.map(normalizeEmocion).filter(e => e && e.id && e.label) : [];
         const intensidad = typeof it.intensidad !== 'undefined' ? it.intensidad : null;
         const etiquetas = Array.isArray(it.etiquetas) ? it.etiquetas : [];
 
