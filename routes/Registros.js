@@ -481,10 +481,6 @@ router.post('/', authMiddleware, async (req, res, next) => {
         return res.status(500).json({ ok: false, error: 'Error de encriptado', message: 'Error en encriptación de la nota', detalle: String(e) });
       }
     }
-    // Normalizar payload y extraer registroId
-    const idFromBody = payload.id ?? payload._id ?? null;
-    const idFromParams = req.params && req.params.id ? String(req.params.id).trim() : null;
-    const registroId = idFromBody || idFromParams || undefined;
 
     const safePayload = {
       userId: userIdForSave,
@@ -492,14 +488,10 @@ router.post('/', authMiddleware, async (req, res, next) => {
       hora: payload.hora ? new Date(payload.hora) : new Date(),
       emociones,
       intensidad,
-      etiquetas: Array.isArray(payload.etiquetas)  ? payload.etiquetas  : [],
+      etiquetas: Array.isArray(payload.etiquetas) ? payload.etiquetas : [],
       notaEncrypted: notaEncrypted ?? null,
       version: payload.version || 1
     };
-
-    if (typeof registroId !== 'undefined' && registroId !== null && String(registroId).trim() !== '') {
-      safePayload.id = String(registroId);
-    }
 
     // compatibilidad con índices antiguos que usen usuarioId
     try {
@@ -621,10 +613,13 @@ router.put('/:id', authMiddleware, async (req, res) => {
         console.warn('No se pudo convertir rawId a ObjectId, usando filtros por string:', rawId, e && e.message ? e.message : e);
       }
     }
-    filters.push({ id: rawId });
-    filters.push({ uuid: rawId });
-    filters.push({ externalId: rawId });
+    const filters = [];
 
+    if (mongoose.isValidObjectId(rawId)) {
+      filters.push({
+        _id: new mongoose.Types.ObjectId(rawId)
+      });
+    }
 
     const found = await RegistroEmocional.findOne({ $or: filters }).lean().exec();
     if (!found) return res.status(404).json({ ok: false, message: 'No se encontró' });
