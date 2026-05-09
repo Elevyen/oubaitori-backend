@@ -662,9 +662,9 @@ router.put('/:id', authMiddleware, async (req, res) => {
       return res.status(403).json({ ok: false, message: 'Error 403' });
     }
     console.log({
-      foundFecha: JSON.stringify(found.fecha),
-      today: JSON.stringify(todayDDMMYYYY()),
-      equal: found.fecha === todayDDMMYYYY()
+      foundFecha: found.fecha,
+      today: todayDDMMYYYY(),
+      serverNow: new Date().toISOString()
     });
     // Solo permitir editar si el registro corresponde al día actual
     if (!isTodayDDMMYYYY(found.fecha)) {
