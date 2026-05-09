@@ -174,16 +174,17 @@ function toObjectIdIfValid(value) {
 }
 
 /* GET /api/registros?month=YYYY-MM
-   Devuelve registros del usuario autenticado para el mes indicado.
-   Nota: el modelo guarda fecha en DD-MM-YYYY,  convertimos con regex ^\\d{2}-MM-YYYY
+*   Devuelve registros del usuario autenticado para el mes indicado.
+*   Nota: el modelo guarda fecha en DD-MM-YYYY,  convertimos con regex ^\\d{2}-MM-YYYY
 */
 router.get('/', authMiddleware, async (req, res, next) => {
   try {
     const usuario = req.usuario;
-    const userIdRaw = resolveUserId(usuario);
-    if (!userIdRaw) return res.status(401).json({ ok: false, error: 'no_autorizado' });
+    const userIdRaw = resolveUserId(usuario); // Obtén el ID de usuario
+    if (!userIdRaw)
+      return res.status(401).json({ ok: false, error: 'no_autorizado' });
 
-    const month = String(req.query.month || '').trim(); // espera YYYY-MM
+    const month = String(req.query.month || '').trim(); // Esperamos MM-YYYY
     const filter = {};
     const userIdObj = toObjectIdIfValid(userIdRaw);
     if (userIdObj) {
@@ -192,15 +193,26 @@ router.get('/', authMiddleware, async (req, res, next) => {
       filter.userId = String(userIdRaw);
     }
 
-    if (month && /^\d{4}-\d{2}$/.test(month)) {
-      const [yyyy, mm] = month.split('-');
-      // fecha almacenada como DD-MM-YYYY regex para cualquier día de ese mes y año
+    // Valida el formato MM-YYYY
+    if (/^\d{2}-\d{4}$/.test(month)) {
+      const [mm, yyyy] = month.split('-');
+      // Filtro por fecha en formato DD-MM-YYYY que inicie con el mes y año
       filter.fecha = { $regex: `^\\d{2}-${mm}-${yyyy}` };
+    } else if (month !== '') {
+      // Error si el mes tiene formato inválido
+      return res.status(400).json({
+        ok: false,
+        error: 'formato_mes_invalido',
+        message: 'El formato del mes debe ser MM-YYYY (ej: 05-2026).'
+      });
     }
 
-    const docs = await RegistroEmocional.find(filter).sort({ fecha: -1, createdAt: -1 }).lean().exec();
+    const docs = await RegistroEmocional.find(filter)
+      .sort({ fecha: -1, createdAt: -1 }) // Ordena por nueva fecha
+      .lean()
+      .exec();
 
-    // Intenta desencriptar notaEncrypted para cada doc solo si el requester es owner
+    // Desencripta las notas solo si el usuario es dueño de los registros
     try {
       const resolvedUserId = resolveUserId(req.usuario);
       const authId = resolvedUserId ? String(resolvedUserId) : null;
@@ -213,41 +225,53 @@ router.get('/', authMiddleware, async (req, res, next) => {
             doc && doc.usuarioId,
             doc && doc.user,
             doc && doc.usuario
-          ].filter(Boolean).map(v => {
-            try { return String(v); } catch { return '' + v; }
-          }).filter(Boolean);
+          ]
+            .filter(Boolean)
+            .map(v => String(v)); // Convierte a string
 
-          const isOwner = usuariosCandidatos.length > 0 && authId && usuariosCandidatos.includes(authId);
+          const isOwner =
+            usuariosCandidatos.length > 0 &&
+            authId &&
+            usuariosCandidatos.includes(authId);
+
           if (isOwner) {
             if (doc.notaEncrypted) {
               try {
                 const maybePromise = decryptNota(doc.notaEncrypted);
-                doc.nota = (maybePromise && typeof maybePromise.then === 'function') ? await maybePromise : maybePromise;
+                doc.nota =
+                  maybePromise && typeof maybePromise.then === 'function'
+                    ? await maybePromise
+                    : maybePromise;
               } catch (e) {
-                console.warn('decryptNota failed for list item id', doc._id || doc.id, e && e.message ? e.message : e);
+                console.warn(
+                  'decryptNota falló para id:',
+                  doc._id || doc.id,
+                  e.message || e
+                );
                 doc.nota = null;
               }
             } else {
               doc.nota = null;
             }
-            // No exponer ciphertext al cliente
+            // Protege el campo de notas cifradas
             delete doc.notaEncrypted;
           } else {
-            // Ocultar campos sensibles para no-owners
+            // Elimina campos sensibles para no propietarios
             delete doc.nota;
             delete doc.notaEncrypted;
           }
         }
       }
     } catch (e) {
-      console.warn('Warning while decrypting notas for list:', e && e.message ? e.message : e);
+      console.warn('Advertencia al desencriptar notas:', e.message || e);
     }
 
     return res.json({ ok: true, registros: docs.map(d => formatRegistro(d, { reqUser: req.usuario })) });
-
   } catch (err) {
-    console.error('GET /api/registros error:', err && err.stack ? err.stack : err);
-    return res.status(500).json({ ok: false, error: 'Error servidor', message: err.message });
+    console.error('GET /api/registros error:', err.stack || err);
+    return res
+      .status(500)
+      .json({ ok: false, error: 'Error servidor', message: err.message });
   }
 });
 // GET /api/registros/fecha/:fecha  -> devuelve registro del usuario para esa fecha (DD-MM-YYYY)
