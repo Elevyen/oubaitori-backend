@@ -1,6 +1,6 @@
 const TZ = 'Europe/Madrid';
 
-export function formatDate(value = new Date()) {
+function formatDate(value = new Date()) {
     const date =
         value instanceof Date
             ? value
@@ -19,14 +19,19 @@ export function formatDate(value = new Date()) {
 
     return `${dd}-${mm}-${yyyy}`;
 }
+
 // Hoy España
-export function todayDate() {
+function todayDate() {
     return formatDate();
 }
 
 // DD-MM-YYYY a Date
-export function toDate(value) {
-    const [dd, mm, yyyy] = value.split('-');
+function toDate(value) {
+    if (value instanceof Date) {
+        return value;
+    }
+
+    const [dd, mm, yyyy] = String(value).split('-');
 
     return new Date(
         Number(yyyy),
@@ -37,34 +42,37 @@ export function toDate(value) {
 }
 
 // Comparar fechas
-export function isSameDate(a, b) {
+function isSameDate(a, b) {
     return formatDate(a) === formatDate(b);
 }
 
 // Fecha futura
-export function isFutureDate(value) {
+function isFutureDate(value) {
     return toDate(value) > toDate(todayDate());
 }
 
 // Últimos 7 días
-export function isWithinLast7Days(value) {
+function isWithinLast7Days(value) {
     const diff =
         toDate(todayDate()) - toDate(value);
+
     const days = Math.floor(
         diff / (1000 * 60 * 60 * 24)
     );
+
     return days >= 0 && days <= 6;
 }
 
 // DD-MM-YYYY a YYYY-MM-DD
 // Mongo
-export function toISODate(value) {
-    const [dd, mm, yyyy] = value.split('-');
+function toISODate(value) {
+    const [dd, mm, yyyy] = String(value).split('-');
 
     return `${yyyy}-${mm}-${dd}`;
 }
+
 // Hora actual España HH:mm:ss
-export function spainTime(value = new Date()) {
+function spainTime(value = new Date()) {
     return new Intl.DateTimeFormat('sv-SE', {
         timeZone: TZ,
         hour: '2-digit',
@@ -75,7 +83,7 @@ export function spainTime(value = new Date()) {
 }
 
 // Fecha y hora España YYYY-MM-DD HH:mm:ss
-export function spainDateTime(value = new Date()) {
+function spainDateTime(value = new Date()) {
     return new Intl.DateTimeFormat('sv-SE', {
         timeZone: TZ,
         year: 'numeric',
@@ -89,6 +97,19 @@ export function spainDateTime(value = new Date()) {
 }
 
 // Añadir minutos
-export function addMinutes(minutes) {
+function addMinutes(minutes) {
     return new Date(Date.now() + minutes * 60 * 1000);
 }
+
+module.exports = {
+    formatDate,
+    todayDate,
+    toDate,
+    isSameDate,
+    isFutureDate,
+    isWithinLast7Days,
+    toISODate,
+    spainTime,
+    spainDateTime,
+    addMinutes
+};
