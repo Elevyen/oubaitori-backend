@@ -2,7 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const { spainDateTime } = require('./utils/date');
+const { spainDateTimeString } = require('./utils/date');
 const { conexionBD, desconectarBD } = require('./config/mongodb');
 
 const registrosRouter = require('./routes/Registros');
@@ -24,7 +24,7 @@ app.use(express.json({ limit: '20mb' }));
 app.use((req, res, next) => {
     if (['POST', 'PUT', 'PATCH'].includes(req.method)) {
         console.log('--- WRITE REQUEST ---');
-        console.log('time:', spainDateTime());
+        console.log('time:', spainDateTimeString());
         console.log('method:', req.method, 'url:', req.originalUrl);
         console.log('origin:', req.headers.origin || req.headers.referer || 'n/a');
         console.log('user-agent:', req.headers['user-agent'] || 'n/a');

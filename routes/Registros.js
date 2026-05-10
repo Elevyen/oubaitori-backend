@@ -4,7 +4,7 @@ const mongoose = require('mongoose');
 const RegistroEmocional = require('../models/RegistroEmocional');
 const authMiddleware = require('../middleware/auth');
 const { encrypt: encryptNota, decrypt: decryptNota } = require('../utils/encriptarNotas');
-const { formatDate, todayDate, isWithinLast7Days, isSameDate, toISODate, spainDateTime } = require('../utils/date');
+const { formatDate, todayDate, isWithinLast7Days, isSameDate, toISODate } = require('../utils/date');
 const MAX_REGISTROS_POR_DIA = 1;
 
 function isToday(value) {
@@ -426,7 +426,7 @@ router.post('/', authMiddleware, async (req, res, next) => {
     const safePayload = {
       userId: userIdForSave,
       fecha: fechaInput,
-      hora: payload.hora || spainDateTime(),
+      hora: payload.hora || new Date(),
       emociones,
       intensidad,
       etiquetas: Array.isArray(payload.etiquetas) ? payload.etiquetas : [],
@@ -463,8 +463,7 @@ router.post('/', authMiddleware, async (req, res, next) => {
           intensidad: safePayload.intensidad,
           etiquetas: safePayload.etiquetas,
           notaEncrypted: safePayload.notaEncrypted,
-          version: safePayload.version,
-          updatedAt: spainDateTime()
+          version: safePayload.version
         };
 
         const updated = await RegistroEmocional.findOneAndUpdate(
@@ -599,7 +598,7 @@ router.put('/:id', authMiddleware, async (req, res) => {
     }
 
     if (!updates.hora) {
-      updates.hora = spainDateTime();
+      updates.hora = new Date();
     }
 
     if (Array.isArray(updates.emociones)) {
@@ -607,8 +606,6 @@ router.put('/:id', authMiddleware, async (req, res) => {
         .map(normalizeEmocion)
         .filter(Boolean);
     }
-    updates.updatedAt = spainDateTime();
-
     // Control para nota cifrada (prioriza una ya cifrada)
     if (req.body.notaEncrypted !== undefined) {
       updates.notaEncrypted = req.body.notaEncrypted;
@@ -690,7 +687,7 @@ router.post("/sincronizar", authMiddleware, async (req, res) => {
           continue;
         }
 
-        const horaVal = it.hora || spainDateTime();
+        const horaVal = it.hora || new Date();
         const emociones = Array.isArray(it.emociones) ? it.emociones.map(normalizeEmocion).filter(Boolean) : [];
         const intensidad = typeof it.intensidad !== 'undefined' ? it.intensidad : null;
         const etiquetas = Array.isArray(it.etiquetas) ? it.etiquetas : [];
