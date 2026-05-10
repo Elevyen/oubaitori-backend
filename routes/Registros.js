@@ -262,12 +262,24 @@ router.get('/fecha/:fecha', authMiddleware, async (req, res) => {
     const authId = resolvedUserId ? String(resolvedUserId) : null;
     const usuariosCandidatos = [found.userId, found.usuarioId, found.user, found.usuario].filter(Boolean).map(v => String(v));
     const isOwner = authId && usuariosCandidatos.length > 0 && usuariosCandidatos.includes(authId);
-
+    console.log('GET REGISTRO DEBUG BEFORE DECRYPT:', {
+      id: found._id,
+      isOwner,
+      authId,
+      usuariosCandidatos,
+      notaEncrypted: found.notaEncrypted,
+      nota: found.nota
+    });
     if (isOwner) {
       if (!Object.prototype.hasOwnProperty.call(found, 'notaEncrypted')) found.notaEncrypted = null;
       try {
         const maybePromise = decryptNota(found.notaEncrypted);
         found.nota = (maybePromise && typeof maybePromise.then === 'function') ? await maybePromise : maybePromise;
+        console.log('GET REGISTRO DEBUG AFTER DECRYPT:', {
+          id: found._id,
+          nota: found.nota,
+          notaEncryptedExists: !!found.notaEncrypted
+        });
       } catch (e) {
         found.nota = null;
       }
@@ -333,11 +345,24 @@ router.get('/:id', authMiddleware, async (req, res) => {
 
     // desencripta nota para owner y eliminar ciphertext antes de devolver
     const isOwner = authId && usuariosCandidatos.length > 0 && usuariosCandidatos.includes(authId);
+    console.log('GET REGISTRO DEBUG BEFORE DECRYPT:', {
+      id: found._id,
+      isOwner,
+      authId,
+      usuariosCandidatos,
+      notaEncrypted: found.notaEncrypted,
+      nota: found.nota
+    });
     if (isOwner) {
       if (!Object.prototype.hasOwnProperty.call(found, 'notaEncrypted')) found.notaEncrypted = null;
       try {
         const maybePromise = decryptNota(found.notaEncrypted);
         found.nota = (maybePromise && typeof maybePromise.then === 'function') ? await maybePromise : maybePromise;
+        console.log('GET REGISTRO DEBUG AFTER DECRYPT:', {
+          id: found._id,
+          nota: found.nota,
+          notaEncryptedExists: !!found.notaEncrypted
+        });
       } catch (e) {
         console.warn('decryptNota failed for id:', rawId, e && e.message ? e.message : e);
         found.nota = null;
@@ -347,8 +372,9 @@ router.get('/:id', authMiddleware, async (req, res) => {
       delete found.nota;
       delete found.notaEncrypted;
     }
-
+    console.log('GET REGISTRO RESPONSE:', formatRegistro(found, { reqUser: req.usuario }));
     return res.status(200).json({ ok: true, registro: formatRegistro(found, { reqUser: req.usuario }) });
+
   } catch (err) {
     console.error('GET /api/registros/:id error:', err && err.stack ? err.stack : err);
     return res.status(500).json({ ok: false, message: 'Error servidor', detail: err.message || String(err) });
