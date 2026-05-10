@@ -4,9 +4,12 @@ const mongoose = require('mongoose');
 const RegistroEmocional = require('../models/RegistroEmocional');
 const authMiddleware = require('../middleware/auth');
 const { encrypt: encryptNota, decrypt: decryptNota } = require('../utils/encriptarNotas');
-
+const { formatDate, todayDate, isWithinLast7Days, isSameDate, toISODate, spainDateTime } = require('../utils/date');
 const MAX_REGISTROS_POR_DIA = 1;
 
+function isToday(value) {
+  return isSameDate(value, todayDate());
+}
 function isDuplicateKeyError(err) {
   return err && (err.code === 11000 || (err.name === 'MongoServerError' && err.code === 11000));
 }
@@ -95,68 +98,6 @@ function formatRegistro(doc, opts = {}) {
     updatedAt: obj.updatedAt,
     version: obj.version
   };
-}
-
-// helpers de fecha usando zona Europe/Madrid (España)
-
-// Convierte "DD-MM-YYYY" a "YYYY-MM-DD" (ISO date string)
-function ddmmyyyyToISO(fechaStr) {
-  if (!fechaStr || typeof fechaStr !== 'string') return null;
-  const m = fechaStr.match(/^(\d{2})-(\d{2})-(\d{4})$/);
-  if (!m) return null;
-  const dd = m[1], mm = m[2], yyyy = m[3];
-  return `${yyyy}-${mm}-${dd}`; // "YYYY-MM-DD"
-}
-
-// Devuelve la fecha actual en España en formato ISO "YYYY-MM-DD"
-function getSpainTodayISO() {
-  try {
-    const iso = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Madrid' }); // "YYYY-MM-DD"
-    return String(iso);
-  } catch (e) {
-    const d = new Date();
-    const yyyy = d.getUTCFullYear();
-    const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
-    const dd = String(d.getUTCDate()).padStart(2, '0');
-    return `${yyyy}-${mm}-${dd}`;
-  }
-}
-
-// Convierte "YYYY-MM-DD" a Date (UTC midnight)
-function isoToDateUTC(isoStr) {
-  if (!isoStr || typeof isoStr !== 'string') return null;
-  const d = new Date(isoStr);
-  return isNaN(d.getTime()) ? null : d;
-}
-
-// devuelve true si fechaStr está dentro de los últimos 6 días + hoy (7 días en total) según hora de España
-function isWithinLast7Days(fechaStr) {
-  const isoTarget = ddmmyyyyToISO(fechaStr);
-  if (!isoTarget) return false;
-
-  const todayISO = getSpainTodayISO(); // "YYYY-MM-DD"
-  const dateToday = isoToDateUTC(todayISO);
-  const dateTarget = isoToDateUTC(isoTarget);
-  if (!dateToday || !dateTarget) return false;
-
-  const diffMs = dateToday.getTime() - dateTarget.getTime();
-  const diffDays = Math.floor(diffMs / (24 * 60 * 60 * 1000));
-  return diffDays >= 0 && diffDays <= 6;
-}
-
-// devuelve true si fechaStr es exactamente hoy en España
-function isTodayDDMMYYYY(fechaStr) {
-  const isoTarget = ddmmyyyyToISO(fechaStr);
-  if (!isoTarget) return false;
-  const todayISO = getSpainTodayISO();
-  return isoTarget === todayISO;
-}
-
-// devuelve hoy en formato DD-MM-YYYY según hora de España
-function todayDDMMYYYY() {
-  const todayISO = getSpainTodayISO(); // "YYYY-MM-DD"
-  const [yyyy, mm, dd] = String(todayISO).split('-');
-  return `${dd}-${mm}-${yyyy}`;
 }
 
 function sanitizeEtiquetas(raw = []) {
@@ -337,7 +278,7 @@ router.get('/fecha/:fecha', authMiddleware, async (req, res) => {
     }
 
     const responseRegistro = formatRegistro(found, { reqUser: req.usuario });
-    responseRegistro.isToday = isTodayDDMMYYYY(found.fecha);
+    responseRegistro.isToday = isToday(found.fecha);
 
     return res.json({ ok: true, registro: responseRegistro });
   } catch (err) {
@@ -432,7 +373,7 @@ router.post('/', authMiddleware, async (req, res, next) => {
     // validaciones fecha en DD-MM-YYYY (modelo)
     let fechaInput = payload.fecha;
     if (fechaInput instanceof Date) {
-      const iso = fechaInput.toLocaleDateString('sv-SE', { timeZone: 'Europe/Madrid' }); // YYYY-MM-DD
+      const iso = toISODate(formatDate(fechaInput));
       const [yyyy, mm, dd] = String(iso).split('-');
       fechaInput = `${dd}-${mm}-${yyyy}`;
     }
@@ -485,7 +426,7 @@ router.post('/', authMiddleware, async (req, res, next) => {
     const safePayload = {
       userId: userIdForSave,
       fecha: fechaInput,
-      hora: payload.hora ? new Date(payload.hora) : new Date(),
+      hora: payload.hora || spainDateTime(),
       emociones,
       intensidad,
       etiquetas: Array.isArray(payload.etiquetas) ? payload.etiquetas : [],
@@ -513,7 +454,7 @@ router.post('/', authMiddleware, async (req, res, next) => {
 
     if (existing) {
       const existingFecha = existing.fecha || fechaInput;
-      const isExistingToday = isTodayDDMMYYYY(existingFecha);
+      const isExistingToday = isToday(existingFecha);
 
       if (isExistingToday) {
         const updateFields = {
@@ -523,7 +464,7 @@ router.post('/', authMiddleware, async (req, res, next) => {
           etiquetas: safePayload.etiquetas,
           notaEncrypted: safePayload.notaEncrypted,
           version: safePayload.version,
-          updatedAt: new Date()
+          updatedAt: spainDateTime()
         };
 
         const updated = await RegistroEmocional.findOneAndUpdate(
@@ -644,7 +585,7 @@ router.put('/:id', authMiddleware, async (req, res) => {
     }
 
     // Solo permitir editar si el registro corresponde al día actual
-    if (!isTodayDDMMYYYY(found.fecha)) {
+    if (!isToday(found.fecha)) {
       return res.status(403).json({ ok: false, message: 'Solo se puede editar el registro del día actual.' });
     }
 
@@ -657,12 +598,16 @@ router.put('/:id', authMiddleware, async (req, res) => {
       }
     }
 
+    if (!updates.hora) {
+      updates.hora = spainDateTime();
+    }
+
     if (Array.isArray(updates.emociones)) {
       updates.emociones = updates.emociones
         .map(normalizeEmocion)
         .filter(Boolean);
     }
-    updates.updatedAt = new Date();
+    updates.updatedAt = spainDateTime();
 
     // Control para nota cifrada (prioriza una ya cifrada)
     if (req.body.notaEncrypted !== undefined) {
@@ -734,10 +679,9 @@ router.post("/sincronizar", authMiddleware, async (req, res) => {
     for (const it of items) {
       try {
         // valida fecha: aceptar Date, luego valida DD-MM-YYYY
-        const fechaRaw = typeof normalizeFecha === 'function' ? normalizeFecha(it.fecha) : it.fecha;
-        let fecha = fechaRaw;
+        let fecha = it.fecha;
         if (fecha instanceof Date) {
-          const iso = fecha.toLocaleDateString('sv-SE', { timeZone: 'Europe/Madrid' }); // "YYYY-MM-DD"
+          const iso = toISODate(formatDate(fecha));
           const [yyyy, mm, dd] = String(iso).split('-');
           fecha = `${dd}-${mm}-${yyyy}`;
         }
@@ -746,7 +690,7 @@ router.post("/sincronizar", authMiddleware, async (req, res) => {
           continue;
         }
 
-        const horaVal = it.hora ? new Date(it.hora) : new Date();
+        const horaVal = it.hora || spainDateTime();
         const emociones = Array.isArray(it.emociones) ? it.emociones.map(normalizeEmocion).filter(Boolean) : [];
         const intensidad = typeof it.intensidad !== 'undefined' ? it.intensidad : null;
         const etiquetas = Array.isArray(it.etiquetas) ? it.etiquetas : [];

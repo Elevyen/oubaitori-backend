@@ -5,6 +5,7 @@ const Usuario = require('../models/Usuario');
 const Registro = require('../models/RegistroEmocional');
 const PendingUser = require('../models/PendingUser');
 const authMiddleware = require('../middleware/auth');
+const { addMinutes } = require('../utils/date');
 
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
@@ -80,7 +81,7 @@ router.post('/create-pending', async (req, res) => {
         if (exists) return res.status(409).json({ error: 'usuario_ya_existe' });
         const passwordHash = await bcrypt.hash(String(password), SALT_ROUNDS);
         const pendingToken = signPendingToken({ email: emailNorm }, PENDING_MIN);
-        const expiresAt = new Date(Date.now() + PENDING_MIN * 60 * 1000);
+        const expiresAt = addMinutes(PENDING_MIN);
         await PendingUser.findOneAndUpdate(
             { email: emailNorm },
             { pendingToken, nombre, email: emailNorm, passwordHash, genero: genero || null, pronombres: pronombres || null, expiresAt },

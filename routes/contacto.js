@@ -5,7 +5,7 @@ const ContactModel = require('../models/contacto');
 const nodemailer = require('nodemailer');
 const SibApiV3Sdk = require('sib-api-v3-sdk');
 const defaultClient = SibApiV3Sdk.ApiClient.instance;
-
+const { spainDateTime, formatDate} = require('../utils/date');
 const apiKey = defaultClient.authentications['api-key'];
 apiKey.apiKey = process.env.SIB_API_KEY;
 const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
@@ -94,7 +94,7 @@ router.post('/', async (req, res) => {
             email: finalEmail,
             titulo: String(titulo).trim(),
             mensaje: String(mensaje).trim(),
-            createdAt: new Date(),
+            createdAt: spainDateTime(),
             meta: { ip: req.ip, userAgent: req.get('User-Agent') || null }
         });
 
@@ -132,12 +132,12 @@ router.post('/', async (req, res) => {
                     doc.mensaje,
                     '',
                     `ID contacto: ${doc._id}`,
-                    `Fecha: ${doc.createdAt}`
+                    `Fecha: ${formatDate(doc.createdAt)} ${spainTime(doc.createdAt)}`
                 ].join('\n\n')
             };
 
             try {
-                await ContactModel.findByIdAndUpdate(doc._id, { notified: true, notifiedAt: new Date() });
+                await ContactModel.findByIdAndUpdate(doc._id, { notified: true, notifiedAt: spainDateTime() });
             } catch (updErr) {
                 // no interrumpir el flujo por fallo de actualización
             }
@@ -151,7 +151,7 @@ router.post('/', async (req, res) => {
                         await ContactModel.findByIdAndUpdate(doc._id, {
                             $inc: { mailAttempts: 1 },
                             mailError: String(err.message || err).slice(0, 1000),
-                            lastMailErrorAt: new Date()
+                            lastMailErrorAt: spainDateTime()
                         });
                     } catch (updErr) { }
                 });
@@ -208,7 +208,7 @@ router.post('/', async (req, res) => {
 //                    await ContactModel.findByIdAndUpdate(doc._id, {
 //                        $inc: { mailAttempts: 1 },
 //                        mailError: String(errTrans.message).slice(0, 1000),
-//                        lastMailErrorAt: new Date()
+//                        lastMailErrorAt: spainDateTime()
 //                    });
 //                } catch (e) { }
 //                return;
@@ -227,7 +227,7 @@ router.post('/', async (req, res) => {
 //                    doc.mensaje,
 //                    '',
 //                    `ID contacto: ${doc._id}`,
-//                    `Fecha: ${doc.createdAt}`
+//                    `Fecha: ${formatDate(doc.createdAt)} ${spainTime(doc.createdAt)}`
 //                ].join('\n\n');
 //
 //                const mailOptions = {
@@ -242,7 +242,7 @@ router.post('/', async (req, res) => {
 //
 //                // Actualizar documento como notificado
 //                try {
-//                    await ContactModel.findByIdAndUpdate(doc._id, { notified: true, notifiedAt: new Date() });
+//                    await ContactModel.findByIdAndUpdate(doc._id, { notified: true, notifiedAt: spainDateTime() });
 //                } catch (updErr) {
 //                    // no interrumpir el flujo por fallo de actualización
 //                }
@@ -252,7 +252,7 @@ router.post('/', async (req, res) => {
 //                    await ContactModel.findByIdAndUpdate(doc._id, {
 //                        $inc: { mailAttempts: 1 },
 //                        mailError: String(err.message || err).slice(0, 1000),
-//                        lastMailErrorAt: new Date()
+//                        lastMailErrorAt: spainDateTime()
 //                    });
 //                } catch (updErr) { }
 //            }
@@ -319,7 +319,7 @@ router.patch('/:id/resuelto', authMiddleware ? authMiddleware : (req, res, next)
 
         const update = { resuelto: Boolean(resuelto) };
         if (resuelto) {
-            update.resueltoAt = new Date();
+            update.resueltoAt = spainDateTime();
         } else {
             update.resueltoAt = null;
         }
