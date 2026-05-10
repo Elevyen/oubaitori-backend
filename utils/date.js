@@ -64,7 +64,6 @@ function isWithinLast7Days(value) {
 }
 
 // DD-MM-YYYY a YYYY-MM-DD
-// Mongo
 function toISODate(value) {
     const [dd, mm, yyyy] = String(value).split('-');
 
@@ -82,8 +81,19 @@ function spainTime(value = new Date()) {
     }).format(value);
 }
 
-// Fecha y hora España YYYY-MM-DD HH:mm:ss
+/*
+  IMPORTANTE:
+  Mongo/Mongoose necesita un Date REAL,
+  no un string formateado.
+*/
 function spainDateTime(value = new Date()) {
+    return new Date(value);
+}
+
+/*
+  Solo para logs y consola
+*/
+function spainDateTimeString(value = new Date()) {
     return new Intl.DateTimeFormat('sv-SE', {
         timeZone: TZ,
         year: 'numeric',
@@ -111,5 +121,6 @@ module.exports = {
     toISODate,
     spainTime,
     spainDateTime,
+    spainDateTimeString,
     addMinutes
 };
