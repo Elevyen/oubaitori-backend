@@ -53,7 +53,55 @@ function extractPlainNota(payload) {
   }
   return payload.nota;
 }
+function verificarEncriptado(value) {
+  if (!value || typeof value !== 'string') {
+    return false;
+  }
 
+  const base64Regex = /^[A-Za-z0-9+/=]+$/;
+
+  if (!base64Regex.test(value)) {
+    return false;
+  }
+  if (value.length < 40) {
+    return false;
+  }
+
+  return true;
+}
+async function resolveNotaEncrypted(payload) {
+  // PRIORIDAD 1:
+  // frontend ya mandó notaEncrypted
+  if (
+    payload.notaEncrypted &&
+    verificarEncriptado(payload.notaEncrypted)
+  ) {
+    return payload.notaEncrypted;
+  }
+
+  // PRIORIDAD 2:
+  // frontend mandó nota en texto plano
+  const plainNota = extractPlainNota(payload);
+
+  if (
+    plainNota !== null &&
+    plainNota !== undefined &&
+    String(plainNota).trim() !== ''
+  ) {
+    const maybePromise = encryptNota(
+      String(plainNota)
+    );
+
+    return (
+      maybePromise &&
+      typeof maybePromise.then === 'function'
+    )
+      ? await maybePromise
+      : maybePromise;
+  }
+
+  return null;
+}
 // normaliza salida del documento para la API
 function formatRegistro(doc, opts = {}) {
   if (!doc) return null;
@@ -427,26 +475,20 @@ router.post('/', authMiddleware, async (req, res, next) => {
       .map(normalizeEmocion)
       .filter(Boolean);
 
-    // extrae texto de nota desde variantes (nota, note, noteText, text)
     let notaEncrypted = null;
-    // Prioriza el valor que llega cifrado, si está
-    if (payload.notaEncrypted) {
-      notaEncrypted = payload.notaEncrypted;
-    } else {
-      // Si el frontend no cifra, cifra en backend
-      const plainNota = extractPlainNota(payload);
-      const notaText = plainNota !== null ? String(plainNota) : '';
-      try {
-        if (notaText !== '') {
-          const maybePromise = encryptNota(String(notaText));
-          notaEncrypted = (maybePromise && typeof maybePromise.then === 'function') ? await maybePromise : maybePromise;
-        } else {
-          notaEncrypted = null;
-        }
-      } catch (e) {
-        console.error('POST /api/registros - encryptNota error:', e && e.message ? e.message : e);
-        return res.status(500).json({ ok: false, error: 'Error de encriptado', message: 'Error en encriptación de la nota', detalle: String(e) });
-      }
+    try {
+      notaEncrypted = await resolveNotaEncrypted(payload);
+    } catch (e) {
+      console.error(
+        'POST /api/registros encrypt error:',
+        e
+      );
+
+      return res.status(500).json({
+        ok: false,
+        error: 'Error de encriptado',
+        detalle: String(e)
+      });
     }
 
     const safePayload = {
@@ -524,11 +566,57 @@ router.post('/', authMiddleware, async (req, res, next) => {
     }
 
     const doc = new RegistroEmocional(safePayload);
+
     try {
+
       await doc.save();
-      const out = doc.toObject ? doc.toObject() : doc;
-      if (out._id) out.id = String(out._id);
-      return res.status(201).json({ ok: true, registro: formatRegistro(out, { reqUser: req.usuario }) });
+
+      const out =
+        doc.toObject
+          ? doc.toObject()
+          : doc;
+
+      if (out._id) {
+        out.id = String(out._id);
+      }
+
+      // DESENCRIPTAR ANTES DE RESPONDER
+      if (out.notaEncrypted) {
+
+        try {
+
+          const maybe =
+            decryptNota(out.notaEncrypted);
+
+          out.nota =
+            maybe &&
+              typeof maybe.then === 'function'
+              ? await maybe
+              : maybe;
+
+        } catch (e) {
+
+          console.warn(
+            'No se pudo desencriptar nota POST:',
+            e
+          );
+
+          out.nota = null;
+        }
+      } else {
+
+        out.nota = null;
+      }
+
+      // NUNCA enviar ciphertext al frontend
+      delete out.notaEncrypted;
+
+      return res.status(201).json({
+        ok: true,
+        registro: formatRegistro(out, {
+          reqUser: req.usuario
+        })
+      });
 
     } catch (errSave) {
       console.error('POST /api/registros - save error:', errSave && errSave.stack ? errSave.stack : errSave);
@@ -615,7 +703,7 @@ router.put('/:id', authMiddleware, async (req, res) => {
     }
 
     // Construir objeto de actualización con campos permitidos
-    const allowed = ['fecha', 'hora', 'emociones', 'intensidad', 'nota', 'etiquetas', 'version'];
+    const allowed = ['fecha', 'hora', 'emociones', 'intensidad', 'notaEncrypted', 'etiquetas', 'version'];
     const updates = {};
     for (const k of allowed) {
       if (req.body[k] !== undefined) {
@@ -633,23 +721,26 @@ router.put('/:id', authMiddleware, async (req, res) => {
         .filter(Boolean);
     }
     // Control para nota cifrada (prioriza una ya cifrada)
-    if (req.body.notaEncrypted !== undefined) {
-      updates.notaEncrypted = req.body.notaEncrypted;
-      updates.nota = null; // nunca guardes el texto plano
-    } else if (req.body.nota !== undefined) {
-      const plainNota = extractPlainNota(req.body);
+    if (
+      req.body.nota !== undefined ||
+      req.body.notaEncrypted !== undefined
+    ) {
       try {
-        if (plainNota !== null && plainNota !== undefined && String(plainNota).length > 0) {
-          const maybePromise = encryptNota(String(plainNota));
-          updates.notaEncrypted = (maybePromise && typeof maybePromise.then === 'function') ? await maybePromise : maybePromise;
-          updates.nota = null;
-        } else {
-          updates.notaEncrypted = null;
-          updates.nota = null;
-        }
+        updates.notaEncrypted =
+          await resolveNotaEncrypted(req.body);
+
+        updates.nota = null;
       } catch (e) {
-        console.error('encryptNota error on update:', e && e.message ? e.message : e);
-        return res.status(500).json({ ok: false, error: 'Error encriptado.', detalle: String(e) });
+        console.error(
+          'encryptNota error on update:',
+          e
+        );
+
+        return res.status(500).json({
+          ok: false,
+          error: 'Error encriptado.',
+          detalle: String(e)
+        });
       }
     }
 
@@ -668,7 +759,44 @@ router.put('/:id', authMiddleware, async (req, res) => {
       return res.status(404).json({ ok: false, message: 'Error 404' });
     }
 
-    return res.status(200).json({ ok: true, registro: updated });
+    // DESENCRIPTAR ANTES DE RESPONDER
+    if (updated.notaEncrypted) {
+
+      try {
+
+        const maybe =
+          decryptNota(updated.notaEncrypted);
+
+        updated.nota =
+          maybe &&
+            typeof maybe.then === 'function'
+            ? await maybe
+            : maybe;
+
+      } catch (e) {
+
+        console.warn(
+          'No se pudo desencriptar nota PUT:',
+          e
+        );
+
+        updated.nota = null;
+      }
+
+    } else {
+
+      updated.nota = null;
+    }
+
+    // NUNCA enviar ciphertext
+    delete updated.notaEncrypted;
+
+    return res.status(200).json({
+      ok: true,
+      registro: formatRegistro(updated, {
+        reqUser: req.usuario
+      })
+    });
   } catch (err) {
     console.error('PUT /api/registros/:id error:', err && err.stack ? err.stack : err);
     return res.status(500).json({ ok: false, message: 'Error servidor', detalle: err.message || String(err) });
@@ -719,22 +847,27 @@ router.post("/sincronizar", authMiddleware, async (req, res) => {
         const etiquetas = Array.isArray(it.etiquetas) ? it.etiquetas : [];
 
         // Nota: aceptar notaEncrypted si viene; si viene nota en texto plano, encriptar aquí
-        const entradaNotaEncrypted = it.notaEncrypted || null;
-        const plainNota = extractPlainNotaLocal(it);
+        // Resolver nota cifrada automáticamente
         let guardarNotaEncrypted = null;
 
         try {
-          if (entradaNotaEncrypted) {
-            guardarNotaEncrypted = entradaNotaEncrypted;
-          } else if (plainNota !== null && plainNota !== undefined) {
-            const maybePromise = encryptNota(String(plainNota));
-            guardarNotaEncrypted = (maybePromise && typeof maybePromise.then === 'function') ? await maybePromise : maybePromise;
-          } else {
-            guardarNotaEncrypted = null;
-          }
+
+          guardarNotaEncrypted =
+            await resolveNotaEncrypted(it);
+
         } catch (encErr) {
-          console.error('Error encriptando nota al sincronizar:', encErr && encErr.message ? encErr.message : encErr);
-          results.rechazados.push({ item: it, reason: "encryption_error", detail: String(encErr) });
+
+          console.error(
+            'Error encriptando nota al sincronizar:',
+            encErr
+          );
+
+          results.rechazados.push({
+            item: it,
+            reason: "encryption_error",
+            detail: String(encErr)
+          });
+
           continue;
         }
 
