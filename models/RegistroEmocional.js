@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-const { formatDate, spainDateTime } = require('../utils/date');
+const { formatDate } = require('../utils/date');
 const EmocionSchema = new mongoose.Schema({
   id: { type: String, required: true },
   label: { type: String, required: true },
@@ -35,7 +35,7 @@ const RegistroEmocionalSchema = new mongoose.Schema({
 
   hora: {
     type: Date,
-    default: spainDateTime
+    default: Date.now
   },
 
   emociones: {
@@ -145,8 +145,8 @@ RegistroEmocionalSchema.pre('save', function () {
       });
 
     if (this.fecha instanceof Date) {
-  this.fecha = formatDate(this.fecha);
-}
+      this.fecha = formatDate(this.fecha);
+    }
 
   } catch (err) {
 
