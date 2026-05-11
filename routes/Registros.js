@@ -672,28 +672,16 @@ router.put('/:id', authMiddleware, async (req, res) => {
           plainNota !== undefined &&
           String(plainNota).length > 0
         ) {
-
-          const maybePromise =
-            encryptNota(String(plainNota));
-
-          updates.notaEncrypted =
-            maybePromise &&
-              typeof maybePromise.then === 'function'
-              ? await maybePromise
-              : maybePromise;
-
+          const maybePromise = encryptNota(String(plainNota));
+          updates.notaEncrypted = maybePromise && typeof maybePromise.then === 'function' ? await maybePromise : maybePromise;
         } else {
-
           updates.notaEncrypted = null;
         }
-
       } catch (e) {
-
         console.error(
           'encryptNota error on update:',
           e && e.message ? e.message : e
         );
-
         return res.status(500).json({
           ok: false,
           error: 'Error encriptado.',
@@ -709,14 +697,38 @@ router.put('/:id', authMiddleware, async (req, res) => {
     // Ejecutar findOneAndUpdate sin upsert; usar returnDocument: 'after'
     const opts = { returnDocument: 'after', lean: true, upsert: false };
     const finalFilter = { $or: filters };
-    const updated = await RegistroEmocional.findOneAndUpdate(finalFilter, { $set: updates }, opts).exec();
+    // buscar documento REAL (no lean)
+    const updated = await RegistroEmocional.findOne(finalFilter);
 
     if (!updated) {
-      const foundAny = await RegistroEmocional.findOne({ $or: filters }).lean().exec();
-      if (foundAny) return res.status(403).json({ ok: false, message: 'Error 403' });
-      return res.status(404).json({ ok: false, message: 'Error 404' });
+      const foundAny =
+        await RegistroEmocional
+          .findOne({ $or: filters })
+          .lean()
+          .exec();
+      if (foundAny) {
+        return res.status(403).json({
+          ok: false,
+          message: 'Error 403'
+        });
+      }
+      return res.status(404).json({
+        ok: false,
+        message: 'Error 404'
+      });
     }
 
+    Object.assign(updated, updates);
+    console.log(
+      'ANTES SAVE emociones:',
+      JSON.stringify(updated.emociones, null, 2)
+    );
+    await updated.save();
+
+    console.log(
+      'DESPUES SAVE emociones:',
+      JSON.stringify(updated.emociones, null, 2)
+    );
     // desencriptar antes de responder
     if (updated.notaEncrypted) {
 
