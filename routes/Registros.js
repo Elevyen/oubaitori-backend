@@ -356,234 +356,377 @@ router.get('/:id', authMiddleware, async (req, res) => {
 });
 
 // POST /api/registros
-router.post('/', authMiddleware, async (req, res, next) => {
+router.post('/', authMiddleware, async (req, res) => {
   try {
     const payload = req.body || {};
-    const usuarioRaw = resolveUserId(req.usuario);
-    if (!usuarioRaw) return res.status(401).json({ ok: false, error: 'No autorizado' });
 
-    // valida y convertir userId (modelo espera ObjectId)
-    let userIdForSave = toObjectIdIfValid(usuarioRaw);
-    if (!userIdForSave) {
-      // si no es ObjectId válido, lo guardamos como string
-      userIdForSave = String(usuarioRaw);
-      console.warn('userId no es ObjectId válido, se guardará como string:', usuarioRaw);
+    const usuarioRaw = resolveUserId(req.usuario);
+
+    if (!usuarioRaw) {
+      return res.status(401).json({
+        ok: false,
+        error: 'No autorizado'
+      });
     }
 
-    // validaciones fecha en DD-MM-YYYY (modelo)
+    // userId
+    let userIdForSave = toObjectIdIfValid(usuarioRaw);
+
+    if (!userIdForSave) {
+      userIdForSave = String(usuarioRaw);
+
+      console.warn(
+        'userId no es ObjectId válido:',
+        usuarioRaw
+      );
+    }
+
+    // fecha
     let fechaInput = payload.fecha;
+
     if (fechaInput instanceof Date) {
-      const iso = toISODate(formatDate(fechaInput));
-      const [yyyy, mm, dd] = String(iso).split('-');
+      const iso = toISODate(
+        formatDate(fechaInput)
+      );
+
+      const [yyyy, mm, dd] =
+        String(iso).split('-');
+
       fechaInput = `${dd}-${mm}-${yyyy}`;
     }
-    if (!fechaInput || !/^\d{2}-\d{2}-\d{4}$/.test(String(fechaInput))) {
-      return res.status(400).json({ ok: false, error: 'Fecha requerida', message: 'Campo fecha requerido (DD-MM-YYYY).' });
+
+    if (
+      !fechaInput ||
+      !/^\d{2}-\d{2}-\d{4}$/.test(
+        String(fechaInput)
+      )
+    ) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Fecha requerida',
+        message:
+          'Campo fecha requerido (DD-MM-YYYY).'
+      });
     }
 
-    // validar que la fecha esté dentro de los 7 días permitidos
+    // solo últimos 7 días
     if (!isWithinLast7Days(fechaInput)) {
-      return res.status(400).json({ ok: false, error: 'Solo se permiten los últimos 7 días', message: 'Solo se permiten registros del día actual y los 6 días anteriores.' });
+      return res.status(400).json({
+        ok: false,
+        error: 'Solo se permiten los últimos 7 días',
+        message:
+          'Solo se permiten registros del día actual y los 6 días anteriores.'
+      });
     }
 
-    const intensidad = Number(payload.intensidad ?? 0);
-    if (isNaN(intensidad) || intensidad < 0 || intensidad > 10) {
-      return res.status(400).json({ ok: false, error: 'Intensidad incorrecta' });
+    // intensidad
+    const intensidad = Number(
+      payload.intensidad ?? 0
+    );
+
+    if (
+      isNaN(intensidad) ||
+      intensidad < 0 ||
+      intensidad > 10
+    ) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Intensidad incorrecta'
+      });
     }
 
-    if (payload.nota && String(payload.nota).length > 2000) {
-      return res.status(400).json({ ok: false, error: 'Nota muy larga' });
+    // nota longitud
+    if (
+      payload.nota &&
+      String(payload.nota).length > 2000
+    ) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Nota muy larga'
+      });
     }
 
-    // normaliza emociones
-    const emocionesRaw = Array.isArray(payload.emociones) ? payload.emociones : [];
+    // emociones
+    const emocionesRaw = Array.isArray(
+      payload.emociones
+    )
+      ? payload.emociones
+      : [];
+
     const emociones = emocionesRaw
       .map(normalizeEmocion)
       .filter(Boolean);
 
-    // extrae texto de nota desde variantes (nota, note, noteText, text)
+    // nota
     let notaEncrypted = null;
 
-    const plainNota = extractPlainNota(payload);
+    const plainNota =
+      extractPlainNota(payload);
+
     const notaText =
       plainNota !== null
         ? String(plainNota)
         : '';
 
     try {
-
       if (notaText !== '') {
-
         const maybePromise =
           encryptNota(notaText);
 
         notaEncrypted =
           maybePromise &&
-            typeof maybePromise.then === 'function'
+          typeof maybePromise.then ===
+            'function'
             ? await maybePromise
             : maybePromise;
-
-      } else {
-
-        notaEncrypted = null;
       }
-
     } catch (e) {
       console.error(
-        'POST /api/registros - encryptNota error:',
-        e && e.message ? e.message : e
+        'encryptNota POST error:',
+        e
       );
 
       return res.status(500).json({
         ok: false,
-        error: 'Error de encriptado',
-        message: 'Error en encriptación de la nota',
+        error: 'Error encriptando nota',
         detalle: String(e)
       });
     }
 
+    // payload seguro
     const safePayload = {
       userId: userIdForSave,
       fecha: fechaInput,
       hora: payload.hora || new Date(),
       emociones,
       intensidad,
-      etiquetas: Array.isArray(payload.etiquetas) ? sanitizeEtiquetas(payload.etiquetas) : [],
-      notaEncrypted: notaEncrypted ?? null,
+      etiquetas: Array.isArray(
+        payload.etiquetas
+      )
+        ? sanitizeEtiquetas(
+            payload.etiquetas
+          )
+        : [],
+      notaEncrypted,
       version: payload.version || 1
     };
 
-    // compatibilidad con índices antiguos que usen usuarioId
+    // compatibilidad
     try {
-      safePayload.usuarioId = (userIdForSave && userIdForSave.toString) ? String(userIdForSave) : userIdForSave;
+      safePayload.usuarioId =
+        userIdForSave &&
+        userIdForSave.toString
+          ? String(userIdForSave)
+          : userIdForSave;
     } catch (e) {
-      safePayload.usuarioId = userIdForSave;
+      safePayload.usuarioId =
+        userIdForSave;
     }
 
-    // --- comprobar si ya existe registro para este user+fecha ---
-    // --- comprobar si ya existe registro para este user+fecha ---
-    const existing = await RegistroEmocional.findOne({
-      $or: [
-        { userId: userIdForSave },
-        { usuarioId: String(userIdForSave) },
-        { userId: String(userIdForSave) }
-      ],
-      fecha: fechaInput
-    }).lean().exec();
+    // buscar existente
+    const existing =
+      await RegistroEmocional.findOne({
+        $or: [
+          { userId: userIdForSave },
+          {
+            usuarioId:
+              String(userIdForSave)
+          },
+          {
+            userId:
+              String(userIdForSave)
+          }
+        ],
+        fecha: fechaInput
+      })
+        .lean()
+        .exec();
 
     if (existing) {
-      const existingFecha = existing.fecha || fechaInput;
-      const isExistingToday = isToday(existingFecha);
+      const existingFecha =
+        existing.fecha || fechaInput;
+
+      const isExistingToday =
+        isToday(existingFecha);
 
       if (isExistingToday) {
         const updateFields = {
           hora: safePayload.hora,
-          emociones: safePayload.emociones,
-          intensidad: safePayload.intensidad,
-          etiquetas: safePayload.etiquetas,
-          notaEncrypted: safePayload.notaEncrypted,
-          version: safePayload.version
+          emociones:
+            safePayload.emociones,
+          intensidad:
+            safePayload.intensidad,
+          etiquetas:
+            safePayload.etiquetas,
+          notaEncrypted:
+            safePayload.notaEncrypted,
+          version:
+            safePayload.version
         };
 
-        const updated = await RegistroEmocional.findOneAndUpdate(
-          { _id: existing._id },
-          { $set: updateFields },
-          { returnDocument: 'after', new: true, lean: true }
-        ).exec();
+        const updated =
+          await RegistroEmocional.findOneAndUpdate(
+            { _id: existing._id },
+            { $set: updateFields },
+            {
+              returnDocument: 'after',
+              new: true,
+              lean: true
+            }
+          ).exec();
 
-        if (updated && updated.notaEncrypted) {
+        if (
+          updated &&
+          updated.notaEncrypted
+        ) {
           try {
-            const maybe = decryptNota(updated.notaEncrypted);
-            updated.nota = (maybe && typeof maybe.then === 'function') ? await maybe : maybe;
+            const maybe =
+              decryptNota(
+                updated.notaEncrypted
+              );
+
+            updated.nota =
+              maybe &&
+              typeof maybe.then ===
+                'function'
+                ? await maybe
+                : maybe;
+
           } catch (e) {
             updated.nota = null;
           }
+        } else {
+          updated.nota = null;
         }
 
-        return res.status(200).json({ ok: true, registro: formatRegistro(updated, { reqUser: req.usuario }) });
+        delete updated.notaEncrypted;
+
+        return res.status(200).json({
+          ok: true,
+          registro: formatRegistro(
+            updated,
+            {
+              reqUser: req.usuario
+            }
+          ),
+          readonly: false
+        });
       }
-
-      // Si existe y no es hoy, devolvemos 409 con info (no editable)
-      return res.status(409).json({
-        ok: false,
-        error: 'Límite día',
-        message: 'Ya existe un registro para ese día.',
-        detalle: {
-          id: existing.id || String(existing._id),
-          fecha: existingFecha,
-          isToday: !!isExistingToday
-        }
-      });
-    }
-
-    const doc = new RegistroEmocional(safePayload);
-    try {
-      await doc.save();
-      const out = doc.toObject ? doc.toObject() : doc;
-
-      if (out._id) {
-        out.id = String(out._id);
-      }
-
-      // desencriptar antes de responder
-      if (out.notaEncrypted) {
+      if (existing.notaEncrypted) {
         try {
-          const maybe = decryptNota(out.notaEncrypted);
+          const maybe =
+            decryptNota(
+              existing.notaEncrypted
+            );
 
-          out.nota =
-            maybe && typeof maybe.then === 'function'
+          existing.nota =
+            maybe &&
+            typeof maybe.then ===
+              'function'
               ? await maybe
               : maybe;
 
         } catch (e) {
-          console.warn(
-            'No se pudo desencriptar nota POST:',
-            e
-          );
-
-          out.nota = null;
+          existing.nota = null;
         }
       } else {
+        existing.nota = null;
+      }
+
+      delete existing.notaEncrypted;
+
+      return res.status(200).json({
+        ok: true,
+        registro: formatRegistro(
+          existing,
+          {
+            reqUser: req.usuario
+          }
+        ),
+        readonly: true,
+        message:
+          'El registro ya existe y no puede editarse.'
+      });
+    }
+
+    const doc =
+      new RegistroEmocional(
+        safePayload
+      );
+
+    await doc.save();
+
+    const out = doc.toObject
+      ? doc.toObject()
+      : doc;
+
+    if (out._id) {
+      out.id = String(out._id);
+    }
+
+    // desencriptar
+    if (out.notaEncrypted) {
+      try {
+        const maybe =
+          decryptNota(
+            out.notaEncrypted
+          );
+
+        out.nota =
+          maybe &&
+          typeof maybe.then ===
+            'function'
+            ? await maybe
+            : maybe;
+
+      } catch (e) {
         out.nota = null;
       }
-
-      // nunca enviar ciphertext
-      delete out.notaEncrypted;
-
-      return res.status(201).json({
-        ok: true,
-        registro: formatRegistro(out, {
-          reqUser: req.usuario
-        })
-      });
-
-    } catch (errSave) {
-      console.error('POST /api/registros - save error:', errSave && errSave.stack ? errSave.stack : errSave);
-
-      // Detección de error de clave duplicada (Mongo E11000) fallback
-      if (isDuplicateKeyError(errSave) || (errSave && (errSave.code === 11000 || errSave.code === 11001))) {
-        console.warn('Duplicate key on create:', errSave.keyValue || errSave.message || errSave);
-        return res.status(409).json({
-          ok: false,
-          error: 'Límite día',
-          message: 'Ya existe un registro para ese día.',
-          detalle: errSave.keyValue || errSave.message || null
-        });
-      }
-
-      if (errSave.name === 'ValidationError') {
-        return res.status(400).json({ ok: false, error: 'validation', details: errSave.errors });
-      }
-
-      throw errSave;
+    } else {
+      out.nota = null;
     }
+
+    delete out.notaEncrypted;
+
+    return res.status(201).json({
+      ok: true,
+      registro: formatRegistro(out, {
+        reqUser: req.usuario
+      }),
+      readonly: !isToday(out.fecha)
+    });
+
   } catch (err) {
-    console.error('CRÍTICO POST /api/registros error completo:', err && err.stack ? err.stack : err);
+    console.error(
+      'POST /api/registros error:',
+      err && err.stack
+        ? err.stack
+        : err
+    );
+
+    // duplicate key mongo
+    if (
+      isDuplicateKeyError(err) ||
+      (err &&
+        (err.code === 11000 ||
+          err.code === 11001))
+    ) {
+      return res.status(409).json({
+        ok: false,
+        error: 'Registro duplicado',
+        message:
+          'Ya existe un registro para esa fecha.'
+      });
+    }
+
     return res.status(500).json({
       ok: false,
       error: 'Error servidor',
-      message: err.message || 'Error servidor',
-      detalle: err.stack || String(err)
+      message:
+        err.message ||
+        'Error servidor',
+      detalle:
+        err.stack || String(err)
     });
   }
 });
