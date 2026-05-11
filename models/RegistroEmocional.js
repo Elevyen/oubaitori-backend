@@ -83,69 +83,28 @@ RegistroEmocionalSchema.pre('save', function () {
   try {
 
     if (Array.isArray(this.etiquetas)) {
+
       this.etiquetas = Array.from(
         new Set(
           this.etiquetas
-            .map(t => String(t || '').trim().toLowerCase())
+            .map(t =>
+              String(t || '')
+                .trim()
+                .toLowerCase()
+            )
             .filter(Boolean)
         )
       );
+
     } else {
+
       this.etiquetas = [];
     }
 
-    if (!Array.isArray(this.emociones)) {
-      this.emociones = [];
-    }
-
-    const allowedKeys = [
-      'id',
-      'label',
-      'emoji',
-      'color',
-      'textColor',
-      'tipo'
-    ];
-
-    this.emociones = this.emociones
-      .filter(e => e && (e.id || e.label))
-      .map(e => {
-
-        const out = {};
-
-        for (const k of allowedKeys) {
-          if (
-            Object.prototype.hasOwnProperty.call(e, k) &&
-            e[k] !== undefined &&
-            e[k] !== null
-          ) {
-            out[k] = e[k];
-          }
-        }
-
-        if (out.id && typeof out.id !== 'string') {
-          out.id = String(out.id);
-        }
-
-        if (!out.id && out.label) {
-          out.id = String(out.label)
-            .toLowerCase()
-            .replace(/\s+/g, '_');
-        }
-
-        if (!out.label && out.id) {
-          out.label = String(out.id);
-        }
-
-        if (!out.tipo) {
-          out.tipo = 'neutra';
-        }
-
-        return out;
-      });
-
     if (this.fecha instanceof Date) {
-      this.fecha = formatDate(this.fecha);
+
+      this.fecha =
+        formatDate(this.fecha);
     }
 
   } catch (err) {
@@ -155,7 +114,6 @@ RegistroEmocionalSchema.pre('save', function () {
       err?.message || err
     );
   }
-
 });
 
 module.exports = mongoose.model(
