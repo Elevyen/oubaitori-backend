@@ -383,13 +383,43 @@ router.put('/:id', authMiddleware, async (req, res) => {
 router.delete('/:id', authMiddleware, async (req, res) => {
     try {
         const id = req.params.id;
-        if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ error: 'id_invalido' });
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({
+                error: 'id_invalido'
+            });
+        }
+        // BORRAR TODOS LOS REGISTROS DEL USUARIO
+        const deletedRegistros = await Registro.deleteMany({
+            $or: [
+                { usuarioId: id },
+                { userId: id },
+                { userId: new mongoose.Types.ObjectId(id) }
+            ]
+        });
+        console.log(
+            'Registros eliminados:',
+            deletedRegistros.deletedCount
+        );
+        // BORRAR USUARIO
         const deleted = await Usuario.findByIdAndDelete(id).lean();
-        if (!deleted) return res.status(404).json({ error: 'usuario_no_encontrado' });
-        return res.status(200).json({ ok: true });
+        if (!deleted) {
+            return res.status(404).json({
+                error: 'usuario_no_encontrado'
+            });
+        }
+        return res.status(200).json({
+            ok: true,
+            deletedRegistros:
+                deletedRegistros.deletedCount || 0
+        });
     } catch (err) {
-        console.error('DELETE /api/usuarios/:id error', err);
-        return res.status(500).json({ error: 'error_borrando_usuario' });
+        console.error(
+            'DELETE /api/usuarios/:id error',
+            err
+        );
+        return res.status(500).json({
+            error: 'error_borrando_usuario'
+        });
     }
 });
 
