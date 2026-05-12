@@ -8,7 +8,7 @@ const { formatDate } = require('../utils/date');
 
 router.post('/', async (req, res) => {
   try {
-    const usuarioId = req.usuario._id;
+    const usuarioId = req.usuario._id || req.usuario.id;
     const registros = await RegistroEmocional.find({userId: usuarioId}).sort({ createdAt: -1 }).limit(7).lean();
 
     if (!registros.length) {
@@ -38,7 +38,7 @@ router.post('/', async (req, res) => {
 
 router.get('/:fecha', async (req, res) => {
   try {
-    const analisis = await Analisis.findOne({usuarioId: req.usuario._id,fechaClave: req.params.fecha});
+    const analisis = await Analisis.findOne({usuarioId: req.usuario._id || req.usuario.id,fechaClave: req.params.fecha});
 
     if (!analisis) {
       return res.status(404).json({ok: false,message:'analisis_no_encontrado'});
