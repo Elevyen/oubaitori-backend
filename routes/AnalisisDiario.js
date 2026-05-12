@@ -39,7 +39,7 @@ router.post('/', async (req, res) => {
 router.get('/:fecha', async (req, res) => {
   try {
     const analisis = await Analisis.findOne({usuarioId: req.usuario._id || req.usuario.id,fechaClave: req.params.fecha});
-
+  console.log("REQ.USUARIO:", req.usuario);
     if (!analisis) {
       return res.status(404).json({ok: false,message:'analisis_no_encontrado'});
     }
