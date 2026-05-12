@@ -82,6 +82,7 @@ app.use('/api/contacto', contactoRouter);
 
 // Montar AnalisisDias protegido por authMiddleware para que req.usuario esté disponible
 app.use('/api/AnalisisDiario', authMiddleware, analisisDiarioRouter);
+app.use('/api/analisis', authMiddleware, analisisDiarioRouter);
 
 // 404 handler (ruta no encontrada)
 app.use((req, res) => {
