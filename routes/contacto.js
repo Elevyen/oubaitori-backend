@@ -5,7 +5,7 @@ const ContactModel = require('../models/contacto');
 const nodemailer = require('nodemailer');
 const SibApiV3Sdk = require('sib-api-v3-sdk');
 const defaultClient = SibApiV3Sdk.ApiClient.instance;
-const { spainDateTime, formatDate} = require('../utils/date');
+const { spainDateTime, spainTime, formatDate} = require('../utils/date');
 const apiKey = defaultClient.authentications['api-key'];
 apiKey.apiKey = process.env.SIB_API_KEY;
 const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
@@ -67,7 +67,6 @@ function createTransporter() {
     });
 }
 /**
- * 
  * POST /api/contacto
  * Guarda contacto y envía correo con BREVO.
  */
