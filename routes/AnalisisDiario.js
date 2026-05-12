@@ -19,7 +19,7 @@ router.post('/', async (req, res) => {
     }
     const resumen = generarAnalisis(registros);
 
-    const fechaClave = formatDate(new Date());
+    const fechaClave = req.body.fecha || formatDate(new Date());
 
     const analisis = await Analisis.findOneAndUpdate({ usuarioId, fechaClave },
       { resumen, actualizadoEn: new Date() },
