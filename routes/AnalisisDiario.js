@@ -4,11 +4,12 @@ const authMiddleware = require('../middleware/auth');
 const Analisis = require('../models/Analisis');
 const RegistroEmocional = require('../models/RegistroEmocional');
 const generarAnalisis = require('../services/generarAnalisis');
+const { formatDate } = require('../utils/date');
 
 router.post('/', async (req, res) => {
   try {
     const usuarioId = req.usuario._id;
-    const registros = await RegistroEmocional.find({ usuarioId }).sort({ createdAt: -1 }).limit(7).lean();
+    const registros = await RegistroEmocional.find({userId: usuarioId}).sort({ createdAt: -1 }).limit(7).lean();
 
     if (!registros.length) {
       return res.status(404).json({
@@ -18,7 +19,7 @@ router.post('/', async (req, res) => {
     }
     const resumen = generarAnalisis(registros);
 
-    const fechaClave = new Date().toISOString().slice(0, 10);
+    const fechaClave = formatDate(new Date());
 
     const analisis = await Analisis.findOneAndUpdate({ usuarioId, fechaClave },
       { resumen, actualizadoEn: new Date() },

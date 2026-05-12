@@ -28,7 +28,15 @@ const AnalisisSchema = new Schema({
 AnalisisSchema.index(
   {
     usuarioId: 1,
-    fechaClave: 1
+    fechaClave: {
+      type: String,
+      required: true,
+      validate: {
+        validator: v => /^\d{2}-\d{2}-\d{4}$/.test(String(v || '')),
+        message: props =>
+          `${props.value} no es una fecha válida (DD-MM-YYYY)`
+      }
+    },
   },
   {
     unique: true

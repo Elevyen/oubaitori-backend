@@ -83,7 +83,7 @@ function spainTime(value = new Date()) {
 
 /*
   IMPORTANTE:
-  Mongo/Mongoose necesita un Date REAL,
+  Mongo/Mongoose necesita un Date,
   no un string formateado.
 */
 function spainDateTime(value = new Date()) {
