@@ -5,7 +5,7 @@ const Analisis = require('../models/Analisis');
 const RegistroEmocional = require('../models/RegistroEmocional');
 const generarAnalisis = require('../services/generarAnalisis');
 
-router.post('/', authMiddleware, async (req, res) => {
+router.post('/', async (req, res) => {
   try {
     const usuarioId = req.usuario._id;
     const registros = await RegistroEmocional.find({ usuarioId }).sort({ createdAt: -1 }).limit(7).lean();
@@ -35,7 +35,7 @@ router.post('/', authMiddleware, async (req, res) => {
 }
 );
 
-router.get('/:fecha', authMiddleware, async (req, res) => {
+router.get('/:fecha', async (req, res) => {
   try {
     const analisis = await Analisis.findOne({usuarioId: req.usuario._id,fechaClave: req.params.fecha});
 
