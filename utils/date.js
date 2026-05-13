@@ -1,10 +1,21 @@
 const TZ = 'Europe/Madrid';
-
+function isDDMMYYYY(value) {
+    return /^\d{2}-\d{2}-\d{4}$/.test(String(value));
+}
 function formatDate(value = new Date()) {
-    const date =
-        value instanceof Date
-            ? value
-            : new Date(value);
+    // si ya viene formateada, devolverla
+    if (
+        typeof value === 'string' &&
+        isDDMMYYYY(value)
+    ) {
+        return value;
+    }
+
+    const date = toDate(value);
+
+    if (isNaN(date.getTime())) {
+        throw new RangeError('Invalid time value');
+    }
 
     const parts = new Intl.DateTimeFormat('es-ES', {
         timeZone: TZ,
@@ -26,19 +37,24 @@ function todayDate() {
 }
 
 // DD-MM-YYYY a Date
+
 function toDate(value) {
     if (value instanceof Date) {
         return value;
     }
 
-    const [dd, mm, yyyy] = String(value).split('-');
+    if (typeof value === 'string' && isDDMMYYYY(value)) {
+        const [dd, mm, yyyy] = value.split('-');
 
-    return new Date(
-        Number(yyyy),
-        Number(mm) - 1,
-        Number(dd),
-        12
-    );
+        return new Date(
+            Number(yyyy),
+            Number(mm) - 1,
+            Number(dd),
+            12
+        );
+    }
+
+    return new Date(value);
 }
 
 // Comparar fechas
